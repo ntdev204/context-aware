@@ -17,17 +17,18 @@ import numpy as np
 import pytest
 
 from src.experience.buffer import ExperienceBuffer
-from src.experience.collector import ExperienceCollector, ExperienceFrame, _encode_action
+from src.experience.collector import ExperienceCollector, _encode_action
 from src.navigation.context_builder import RobotState
 from src.navigation.nav_command import NavigationCommand, NavigationMode
-from src.perception.intent_cnn import IntentPrediction, STATIONARY, INTENT_NAMES
+from src.perception.intent_cnn import INTENT_NAMES, STATIONARY, IntentPrediction
 from src.perception.yolo_detector import FrameDetections
-
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
+
 def make_frame_image():
     import numpy as np
+
     return np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
 
 
@@ -55,7 +56,8 @@ def make_intent_pred(track_id=1):
         intent_class=STATIONARY,
         intent_name=INTENT_NAMES[STATIONARY],
         probabilities=probs,
-        dx=0.0, dy=0.0,
+        dx=0.0,
+        dy=0.0,
         confidence=1.0,
     )
 
@@ -65,6 +67,7 @@ def make_observation(dim=102):
 
 
 # ── Action Encoding ───────────────────────────────────────────────────────────
+
 
 class TestActionEncoding:
     def test_shape(self):
@@ -89,6 +92,7 @@ class TestActionEncoding:
 
 
 # ── ExperienceBuffer ─────────────────────────────────────────────────────────
+
 
 class TestExperienceBuffer:
     def test_push_and_len(self):
@@ -116,6 +120,7 @@ class TestExperienceBuffer:
     def test_thread_safety(self):
         """Push from multiple threads — no crash, count correct."""
         import threading
+
         buf = ExperienceBuffer(max_size=10_000, async_write=False)
         errors = []
 
@@ -142,7 +147,7 @@ class TestExperienceBuffer:
         assert result is False
 
     def test_hdf5_write_creates_file(self):
-        pytest.importorskip("h5py")   # skip if h5py not installed
+        pytest.importorskip("h5py")  # skip if h5py not installed
         with tempfile.TemporaryDirectory() as tmpdir:
             buf = ExperienceBuffer(
                 max_size=100,
@@ -155,12 +160,12 @@ class TestExperienceBuffer:
             collector = ExperienceCollector(buffer=buf, enabled=True)
             for i in range(5):
                 collector.collect(
-                    raw_frame    = make_frame_image(),
-                    frame_det    = make_frame_det(),
-                    intent_preds = [make_intent_pred()],
-                    observation  = make_observation(),
-                    cmd          = make_nav_cmd(),
-                    robot_state  = make_robot_state(),
+                    raw_frame=make_frame_image(),
+                    frame_det=make_frame_det(),
+                    intent_preds=[make_intent_pred()],
+                    observation=make_observation(),
+                    cmd=make_nav_cmd(),
+                    robot_state=make_robot_state(),
                 )
             # Manually flush pending writes
             buf._write_hdf5(buf._pending)
@@ -172,6 +177,7 @@ class TestExperienceBuffer:
 
 # ── ExperienceCollector ───────────────────────────────────────────────────────
 
+
 class TestExperienceCollector:
     def _make_collector(self):
         buf = ExperienceBuffer(max_size=1000, async_write=False)
@@ -180,12 +186,12 @@ class TestExperienceCollector:
     def test_all_fields_present(self):
         collector, buf = self._make_collector()
         exp = collector.collect(
-            raw_frame    = make_frame_image(),
-            frame_det    = make_frame_det(),
-            intent_preds = [make_intent_pred()],
-            observation  = make_observation(),
-            cmd          = make_nav_cmd(),
-            robot_state  = make_robot_state(),
+            raw_frame=make_frame_image(),
+            frame_det=make_frame_det(),
+            intent_preds=[make_intent_pred()],
+            observation=make_observation(),
+            cmd=make_nav_cmd(),
+            robot_state=make_robot_state(),
         )
         assert exp is not None
         assert exp.frame_id == 0
@@ -202,9 +208,12 @@ class TestExperienceCollector:
         collector, _ = self._make_collector()
         t_before = time.monotonic()
         exp = collector.collect(
-            raw_frame=make_frame_image(), frame_det=make_frame_det(),
-            intent_preds=[], observation=make_observation(),
-            cmd=make_nav_cmd(), robot_state=make_robot_state(),
+            raw_frame=make_frame_image(),
+            frame_det=make_frame_det(),
+            intent_preds=[],
+            observation=make_observation(),
+            cmd=make_nav_cmd(),
+            robot_state=make_robot_state(),
         )
         t_after = time.monotonic()
         assert t_before <= exp.timestamp <= t_after
@@ -213,18 +222,24 @@ class TestExperienceCollector:
         collector, _ = self._make_collector()
         for expected_id in range(5):
             exp = collector.collect(
-                raw_frame=make_frame_image(), frame_det=make_frame_det(),
-                intent_preds=[], observation=make_observation(),
-                cmd=make_nav_cmd(), robot_state=make_robot_state(),
+                raw_frame=make_frame_image(),
+                frame_det=make_frame_det(),
+                intent_preds=[],
+                observation=make_observation(),
+                cmd=make_nav_cmd(),
+                robot_state=make_robot_state(),
             )
             assert exp.frame_id == expected_id
 
     def test_jpeg_quality_min_size(self):
         collector, _ = self._make_collector()
         exp = collector.collect(
-            raw_frame=make_frame_image(), frame_det=make_frame_det(),
-            intent_preds=[], observation=make_observation(),
-            cmd=make_nav_cmd(), robot_state=make_robot_state(),
+            raw_frame=make_frame_image(),
+            frame_det=make_frame_det(),
+            intent_preds=[],
+            observation=make_observation(),
+            cmd=make_nav_cmd(),
+            robot_state=make_robot_state(),
         )
         # Quality 85 JPEG of a 640x480 random image — should be > 10KB
         assert len(exp.raw_image_jpeg) > 10_000
@@ -233,9 +248,12 @@ class TestExperienceCollector:
         buf = ExperienceBuffer(max_size=100, async_write=False)
         collector = ExperienceCollector(buffer=buf, enabled=False)
         result = collector.collect(
-            raw_frame=make_frame_image(), frame_det=make_frame_det(),
-            intent_preds=[], observation=make_observation(),
-            cmd=make_nav_cmd(), robot_state=make_robot_state(),
+            raw_frame=make_frame_image(),
+            frame_det=make_frame_det(),
+            intent_preds=[],
+            observation=make_observation(),
+            cmd=make_nav_cmd(),
+            robot_state=make_robot_state(),
         )
         assert result is None
 
@@ -243,9 +261,12 @@ class TestExperienceCollector:
         collector, _ = self._make_collector()
         for _ in range(10):
             collector.collect(
-                raw_frame=make_frame_image(), frame_det=make_frame_det(),
-                intent_preds=[], observation=make_observation(),
-                cmd=make_nav_cmd(), robot_state=make_robot_state(),
+                raw_frame=make_frame_image(),
+                frame_det=make_frame_det(),
+                intent_preds=[],
+                observation=make_observation(),
+                cmd=make_nav_cmd(),
+                robot_state=make_robot_state(),
             )
         stats = collector.stats
         assert stats["collected"] == 10
@@ -262,14 +283,17 @@ class TestExperienceCollector:
             buf.start()
             collector = ExperienceCollector(buffer=buf, enabled=True)
             exp = collector.collect(
-                raw_frame=make_frame_image(), frame_det=make_frame_det(),
-                intent_preds=[], observation=make_observation(),
-                cmd=make_nav_cmd(), robot_state=make_robot_state(),
+                raw_frame=make_frame_image(),
+                frame_det=make_frame_det(),
+                intent_preds=[],
+                observation=make_observation(),
+                cmd=make_nav_cmd(),
+                robot_state=make_robot_state(),
             )
             buf._write_directory([exp])
             buf.stop()
 
-            jpgs  = list(Path(tmpdir).glob("*.jpg"))
+            jpgs = list(Path(tmpdir).glob("*.jpg"))
             jsons = list(Path(tmpdir).glob("*.json"))
             assert len(jpgs) == 1
             assert len(jsons) == 1

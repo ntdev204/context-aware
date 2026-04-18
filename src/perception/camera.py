@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Optional, Tuple
 
 import cv2
 import numpy as np
@@ -45,12 +44,12 @@ class Camera:
         # "astra" backend streams both RGB and uint16 depth via OpenNI2
         self._has_depth: bool = backend == "astra"
 
-        self._cap: Optional[cv2.VideoCapture] = None
-        self._frame: Optional[np.ndarray] = None
-        self._depth_frame: Optional[np.ndarray] = None  # uint16, millimetres
+        self._cap: cv2.VideoCapture | None = None
+        self._frame: np.ndarray | None = None
+        self._depth_frame: np.ndarray | None = None  # uint16, millimetres
         self._lock = threading.Lock()
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._frame_count = 0
 
         # OpenNI2 device handles (populated in start() for astra backend)
@@ -89,7 +88,11 @@ class Camera:
             raise RuntimeError("Camera did not produce a frame within 5 s")
         logger.info(
             "Camera started: %dx%d @ %d FPS [%s, depth=%s]",
-            self.width, self.height, self.fps, self.backend, self._has_depth,
+            self.width,
+            self.height,
+            self.fps,
+            self.backend,
+            self._has_depth,
         )
 
     def stop(self) -> None:
@@ -110,7 +113,7 @@ class Camera:
     # ------------------------------------------------------------------
     # Frame access
     # ------------------------------------------------------------------
-    def grab(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    def grab(self) -> tuple[np.ndarray | None, np.ndarray | None]:
         """Return (rgb_frame, depth_frame) — depth is None when unavailable.
 
         rgb_frame  : BGR uint8 numpy array, or None if camera not ready.
@@ -180,17 +183,18 @@ class Camera:
         """Initialise OpenNI2 and open colour + depth streams."""
         # Guard: OpenNI2 is not available on Windows — fall back silently
         import platform
+
         if platform.system() == "Windows":
-            logger.warning(
-                "Astra backend requested on Windows — falling back to USB (no depth)"
-            )
+            logger.warning("Astra backend requested on Windows — falling back to USB (no depth)")
             self._has_depth = False
             self._cap = self._open_capture()
             return
 
         try:
-            from openni import openni2  # type: ignore[import]
             import os as _os
+
+            from openni import openni2  # type: ignore[import]
+
             self._openni2 = openni2
 
             # Orbbec official OpenNI2 binaries extracted to /usr/lib
@@ -239,7 +243,7 @@ class Camera:
             # Gracefully degrade to no-depth if OpenNI2 fails
             logger.warning("Astra OpenNI2 init failed (%s) — falling back to USB rgb-only", exc)
             self._has_depth = False
-            self.backend = "usb"   # switch away from 'astra' so _open_capture uses V4L2
+            self.backend = "usb"  # switch away from 'astra' so _open_capture uses V4L2
             try:
                 self._cap = self._open_capture()
             except RuntimeError as cam_exc:
@@ -260,16 +264,14 @@ class Camera:
             try:
                 color_frame = self._oni_color_stream.read_frame()
                 rgb_buf = np.frombuffer(color_frame.get_buffer_as_uint8(), dtype=np.uint8)
-                rgb = cv2.cvtColor(
-                    rgb_buf.reshape(self.height, self.width, 3), cv2.COLOR_RGB2BGR
-                )
+                rgb = cv2.cvtColor(rgb_buf.reshape(self.height, self.width, 3), cv2.COLOR_RGB2BGR)
             except Exception as exc:
                 logger.warning("Astra RGB read failed: %s", exc)
                 time.sleep(0.1)
                 continue  # RGB failure → skip frame entirely
 
             # --- Depth (isolated try/except — failure yields None) ---
-            depth: Optional[np.ndarray] = None
+            depth: np.ndarray | None = None
             try:
                 depth_frame = self._oni_depth_stream.read_frame()
                 depth_buf = np.frombuffer(depth_frame.get_buffer_as_uint16(), dtype=np.uint16)

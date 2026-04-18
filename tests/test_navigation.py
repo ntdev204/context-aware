@@ -6,22 +6,27 @@ import math
 import time
 
 import numpy as np
-import pytest
 
-from src.navigation.context_builder import ContextBuilder, OBS_DIM, RobotState
+from src.navigation.context_builder import OBS_DIM, ContextBuilder, RobotState
 from src.navigation.heuristic_policy import HeuristicPolicy
 from src.navigation.nav_command import NavigationCommand, NavigationMode
 from src.navigation.safety_monitor import SafetyMonitor
 from src.perception.intent_cnn import (
-    APPROACHING, CROSSING, ERRATIC, STATIONARY, IntentPrediction, INTENT_NAMES,
+    APPROACHING,
+    CROSSING,
+    ERRATIC,
+    INTENT_NAMES,
+    STATIONARY,
+    IntentPrediction,
 )
 from src.perception.yolo_detector import DetectionResult, FrameDetections
 
-
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def make_det(x1=100, y1=100, x2=200, y2=400, cls="person", tid=1):
     from src.perception.yolo_detector import CLASS_NAMES
+
     return DetectionResult(
         bbox=(x1, y1, x2, y2),
         class_id=CLASS_NAMES.index(cls) if cls in CLASS_NAMES else 0,
@@ -33,7 +38,7 @@ def make_det(x1=100, y1=100, x2=200, y2=400, cls="person", tid=1):
 
 def make_fd(persons=None, obstacles=None, free_space=0.9):
     fd = FrameDetections(free_space_ratio=free_space)
-    fd.persons   = persons   or []
+    fd.persons = persons or []
     fd.obstacles = obstacles or []
     fd.all_detections = fd.persons + fd.obstacles
     return fd
@@ -48,12 +53,14 @@ def make_pred(track_id=1, intent=STATIONARY, conf=0.9, dx=0.0, dy=0.0):
         intent_class=intent,
         intent_name=INTENT_NAMES[intent],
         probabilities=probs,
-        dx=dx, dy=dy,
+        dx=dx,
+        dy=dy,
         confidence=conf,
     )
 
 
 # ── ContextBuilder ───────────────────────────────────────────────────────────
+
 
 class TestContextBuilder:
     def test_snapshot_observation_shape(self):
@@ -75,7 +82,7 @@ class TestContextBuilder:
         cb = ContextBuilder(temporal_stack_size=3)
         fd = make_fd()
         obs = cb.build(fd, [])
-        assert obs.shape == (OBS_DIM * 3,)   # padded with zeros
+        assert obs.shape == (OBS_DIM * 3,)  # padded with zeros
 
     def test_free_space_ratio_in_obs(self):
         cb = ContextBuilder(temporal_stack_size=1)
@@ -87,7 +94,7 @@ class TestContextBuilder:
         cb = ContextBuilder(temporal_stack_size=1)
         fd = make_fd(persons=[], free_space=1.0)
         obs = cb.build(fd, [])
-        assert obs[1] == 1.0   # normalised max distance
+        assert obs[1] == 1.0  # normalised max distance
 
     def test_intent_feats_in_obs(self):
         cb = ContextBuilder(temporal_stack_size=1)
@@ -103,7 +110,7 @@ class TestContextBuilder:
         cb.update_robot_state(RobotState(vx=1.0, vy=0.5, vtheta=0.3))
         fd = make_fd()
         obs = cb.build(fd, [])
-        assert abs(obs[94] - 0.5) < 1e-3    # 1.0/2.0 normalised
+        assert abs(obs[94] - 0.5) < 1e-3  # 1.0/2.0 normalised
 
     def test_reset_clears_history(self):
         cb = ContextBuilder(temporal_stack_size=3)
@@ -117,13 +124,14 @@ class TestContextBuilder:
     def test_observation_all_finite(self):
         cb = ContextBuilder(temporal_stack_size=1)
         persons = [make_det(200, 100, 300, 400, tid=i) for i in range(5)]
-        preds   = [make_pred(track_id=i, intent=CROSSING) for i in range(5)]
+        preds = [make_pred(track_id=i, intent=CROSSING) for i in range(5)]
         fd = make_fd(persons=persons, free_space=0.3)
         obs = cb.build(fd, preds)
         assert np.all(np.isfinite(obs))
 
 
 # ── HeuristicPolicy ──────────────────────────────────────────────────────────
+
 
 class TestHeuristicPolicy:
     def _policy(self):
@@ -145,7 +153,7 @@ class TestHeuristicPolicy:
 
     def test_person_close_stop(self):
         policy = self._policy()
-        person = make_det(300, 50, 380, 700)   # tall bbox = close
+        person = make_det(300, 50, 380, 700)  # tall bbox = close
         obs = self._obs(person_dist=0.3)
         cmd = policy.decide(obs, make_fd(persons=[person], free_space=0.4), [])
         assert cmd.mode == NavigationMode.STOP
@@ -164,7 +172,7 @@ class TestHeuristicPolicy:
         pred = make_pred(track_id=1, intent=CROSSING, conf=0.8)
         cmd = policy.decide(obs, make_fd(persons=[make_det()]), [pred])
         assert cmd.mode == NavigationMode.AVOID
-        assert 0.0 < cmd.velocity_scale <= policy.cautious_vel   # AVOID is ≤ cautious
+        assert 0.0 < cmd.velocity_scale <= policy.cautious_vel  # AVOID is ≤ cautious
 
     def test_velocity_clipped_to_one(self):
         policy = HeuristicPolicy(cruise_velocity=2.0)  # intentionally > 1
@@ -174,7 +182,7 @@ class TestHeuristicPolicy:
 
     def test_heading_clipped(self):
         policy = self._policy()
-        person = make_det(0, 100, 50, 400)   # far left → should steer right
+        person = make_det(0, 100, 50, 400)  # far left → should steer right
         obs = self._obs(person_dist=1.5, free=0.4)
         pred = make_pred(track_id=1, intent=CROSSING, conf=0.9)
         cmd = policy.decide(obs, make_fd(persons=[person]), [pred])
@@ -188,6 +196,7 @@ class TestHeuristicPolicy:
 
 
 # ── SafetyMonitor ────────────────────────────────────────────────────────────
+
 
 class TestSafetyMonitor:
     def _monitor(self):

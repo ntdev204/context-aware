@@ -11,7 +11,6 @@ Exits:
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -19,6 +18,7 @@ MIN_TOTAL_IMAGES = 500
 MIN_CLASS_IMAGES = 50
 MAX_IMBALANCE_RATIO = 10.0
 MAX_DUPLICATE_PCT = 5.0
+
 
 def _remove_bad_files(files_meta: list[dict]):
     """Automatically remove corrupt or duplicate files."""
@@ -33,14 +33,15 @@ def _remove_bad_files(files_meta: list[dict]):
                 print(f"[!] Failed to remove {p}: {e}")
     return removed
 
+
 def validate(report_path: Path) -> int:
-    with open(report_path, "r", encoding="utf-8") as f:
+    with open(report_path, encoding="utf-8") as f:
         report = json.load(f)
 
     print(f"--- Validating Dataset Report: {report_path.name} ---")
-    
+
     status = 0
-    
+
     # 1. Handle corrupt images (auto-purge)
     corrupt = report.get("corrupt_images", [])
     if corrupt:
@@ -48,7 +49,7 @@ def validate(report_path: Path) -> int:
         removed = _remove_bad_files(corrupt)
         print(f"    -> Removed {removed} files.")
         report["total_images"] -= removed
-        # (We don't know exactly which class they belonged to without parsing, 
+        # (We don't know exactly which class they belonged to without parsing,
         # but total_images adjustment is enough for the block threshold)
 
     # 2. Block checks
@@ -60,14 +61,14 @@ def validate(report_path: Path) -> int:
         print(f"[✅] Total images: {total}")
 
     if status == 1:
-        return status # Fatal, no need to check warnings
+        return status  # Fatal, no need to check warnings
 
     # 3. Warning checks
     classes = report.get("classes", {})
     if not classes:
         print("[❌] BLOCKED: No classes found.")
         return 1
-        
+
     counts = list(classes.values())
     max_c = max(counts)
     min_c = min(counts)
@@ -76,11 +77,11 @@ def validate(report_path: Path) -> int:
         small_classes = [c for c, count in classes.items() if count < MIN_CLASS_IMAGES]
         print(f"[⚠️] WARNING: Classes with < {MIN_CLASS_IMAGES} images: {small_classes}")
         status = max(status, 2)
-        
+
     if min_c > 0 and (max_c / min_c) > MAX_IMBALANCE_RATIO:
-        print(f"[⚠️] WARNING: Severe class imbalance. Ratio {max_c/min_c:.1f}:1")
+        print(f"[⚠️] WARNING: Severe class imbalance. Ratio {max_c / min_c:.1f}:1")
         status = max(status, 2)
-        
+
     dupes = report.get("duplicates", [])
     dupe_pct = (len(dupes) / total) * 100 if total > 0 else 0
     if dupe_pct > MAX_DUPLICATE_PCT:
@@ -91,16 +92,17 @@ def validate(report_path: Path) -> int:
 
     if status == 0:
         print("[✅] Dataset passed all quality checks.")
-    
+
     return status
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("report", type=Path, help="Path to exploration JSON report")
     args = parser.parse_args()
-    
+
     if not args.report.exists():
         print(f"[!] Report not found: {args.report}")
         sys.exit(1)
-        
+
     sys.exit(validate(args.report))

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import List
 
 import numpy as np
 
@@ -43,15 +42,15 @@ class HeuristicPolicy:
         hard_stop_distance: float = 0.5,  # metres
         slow_down_distance: float = 1.0,
     ) -> None:
-        self.cruise_threshold   = cruise_free_space_threshold
-        self.cruise_vel         = cruise_velocity
-        self.cautious_vel       = cautious_velocity
-        self.avoid_vel          = avoid_velocity
-        self.follow_vel         = follow_velocity
-        self.hard_stop_dist     = hard_stop_distance
-        self.slow_down_dist     = slow_down_distance
+        self.cruise_threshold = cruise_free_space_threshold
+        self.cruise_vel = cruise_velocity
+        self.cautious_vel = cautious_velocity
+        self.avoid_vel = avoid_velocity
+        self.follow_vel = follow_velocity
+        self.hard_stop_dist = hard_stop_distance
+        self.slow_down_dist = slow_down_distance
 
-        self._follow_target_id: int = -1   # set externally to enable FOLLOW
+        self._follow_target_id: int = -1  # set externally to enable FOLLOW
         self._observation: np.ndarray | None = None
 
     def set_follow_target(self, track_id: int) -> None:
@@ -62,23 +61,23 @@ class HeuristicPolicy:
         self,
         observation: np.ndarray,
         frame_det: FrameDetections,
-        intent_preds: List[IntentPrediction],
+        intent_preds: list[IntentPrediction],
     ) -> NavigationCommand:
         """Return a NavigationCommand based on pure rule logic."""
         self._observation = observation
 
-        persons   = frame_det.persons
+        persons = frame_det.persons
         obstacles = frame_det.obstacles
         free_ratio = frame_det.free_space_ratio
 
         intent_map = {p.track_id: p for p in intent_preds}
 
         # Extract distances from observation vector (de-normalised)
-        nearest_person_dist   = float(observation[1]) * 5.0   # de-normalised
+        nearest_person_dist = float(observation[1]) * 5.0  # de-normalised
         nearest_obstacle_dist = float(observation[3]) * 5.0
 
         # RULE 1: Hard stop for proximity
-        min_dist = min(nearest_person_dist, nearest_obstacle_dist)
+        min(nearest_person_dist, nearest_obstacle_dist)
         if persons and nearest_person_dist < self.hard_stop_dist:
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
         if obstacles and nearest_obstacle_dist < 0.3:
@@ -107,8 +106,13 @@ class HeuristicPolicy:
         # RULE 4: FOLLOW mode
         if self._follow_target_id >= 0:
             heading = self._heading_toward(self._follow_target_id, persons)
-            return self._make(NavigationMode.FOLLOW, self.follow_vel, heading, confidence=0.80,
-                              follow_target_id=self._follow_target_id)
+            return self._make(
+                NavigationMode.FOLLOW,
+                self.follow_vel,
+                heading,
+                confidence=0.80,
+                follow_target_id=self._follow_target_id,
+            )
 
         # RULE 5: Open space → CRUISE
         if free_ratio >= self.cruise_threshold and not persons:
@@ -143,20 +147,23 @@ class HeuristicPolicy:
     @staticmethod
     def _compute_avoid_heading(blocker: DetectionResult, frame_det: FrameDetections) -> float:
         """Steer away from blocking person: if they are left → steer right."""
-        frame_mid = 640 / 2.0   # assume 640px width
+        frame_mid = 640 / 2.0  # assume 640px width
         cx = (blocker.bbox[0] + blocker.bbox[2]) / 2.0
         # Nudge opposite to blocker's position
         raw = -(cx - frame_mid) / frame_mid * math.radians(25)
         return float(np.clip(raw, -math.pi / 4, math.pi / 4))
 
     @staticmethod
-    def _heading_toward(target_id: int, persons: List[DetectionResult]) -> float:
+    def _heading_toward(target_id: int, persons: list[DetectionResult]) -> float:
         for p in persons:
             if p.track_id == target_id:
                 frame_mid = 640 / 2.0
                 cx = (p.bbox[0] + p.bbox[2]) / 2.0
-                return float(np.clip(
-                    (cx - frame_mid) / frame_mid * math.radians(20),
-                    -math.pi / 4, math.pi / 4,
-                ))
+                return float(
+                    np.clip(
+                        (cx - frame_mid) / frame_mid * math.radians(20),
+                        -math.pi / 4,
+                        math.pi / 4,
+                    )
+                )
         return 0.0

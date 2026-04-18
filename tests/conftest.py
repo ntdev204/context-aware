@@ -1,4 +1,5 @@
 """pytest conftest — configures pytest for the test suite."""
+
 import sys
 from pathlib import Path
 

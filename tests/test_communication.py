@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import struct
-import threading
 import time
 
 import pytest
 
 from src.navigation.nav_command import NavigationCommand, NavigationMode
-from src.perception.yolo_detector import FrameDetections
-
 
 # ── NavigationCommand Serialization ──────────────────────────────────────────
+
 
 class TestNavCommandSerialization:
     def test_clip_velocity(self):
@@ -27,6 +25,7 @@ class TestNavCommandSerialization:
 
     def test_clip_heading(self):
         import math
+
         cmd = NavigationCommand(mode=NavigationMode.AVOID, heading_offset=2.0)
         cmd.clip()
         assert cmd.heading_offset <= math.pi / 4
@@ -51,12 +50,14 @@ class TestNavCommandSerialization:
 
 # ── ZMQ Publisher Fallback Encoding ──────────────────────────────────────────
 
+
 class TestZMQPublisherEncoding:
     """Test the struct-based fallback encoder (no proto compiled needed)."""
 
     def test_fallback_encode_nav_cmd(self):
-        pytest.importorskip("zmq")   # skip on machines without pyzmq
+        pytest.importorskip("zmq")  # skip on machines without pyzmq
         from src.communication.zmq_publisher import ZMQPublisher
+
         cmd = NavigationCommand(
             mode=NavigationMode.AVOID,
             velocity_scale=0.4,
@@ -70,9 +71,10 @@ class TestZMQPublisherEncoding:
         assert len(raw) > 0
 
     def test_fallback_decode_round_trip(self):
-        pytest.importorskip("zmq")   # skip on machines without pyzmq
+        pytest.importorskip("zmq")  # skip on machines without pyzmq
         """Encode with struct, decode manually, check values."""
         from src.communication.zmq_publisher import ZMQPublisher
+
         cmd = NavigationCommand(
             mode=NavigationMode.CRUISE,
             velocity_scale=0.7,
@@ -95,6 +97,7 @@ class TestZMQPublisherEncoding:
 
 # ── ZMQ Loopback (integration, requires ZMQ) ─────────────────────────────────
 
+
 class TestZMQLoopback:
     """Test PUB/SUB on loopback.  Skipped if ZMQ not available."""
 
@@ -104,6 +107,7 @@ class TestZMQLoopback:
 
     def test_pub_sub_loopback(self):
         import zmq
+
         ctx = zmq.Context()
         port = 15999
 
@@ -117,7 +121,7 @@ class TestZMQLoopback:
         sub.connect(f"tcp://127.0.0.1:{port}")
         sub.setsockopt(zmq.RCVTIMEO, 2000)
 
-        time.sleep(0.1)   # allow connect
+        time.sleep(0.1)  # allow connect
         pub.send_multipart([b"test", b"hello"])
 
         try:
@@ -132,6 +136,7 @@ class TestZMQLoopback:
     def test_pub_no_block_when_no_subscriber(self):
         """Publisher must not hang when no subscriber connected."""
         import zmq
+
         ctx = zmq.Context()
         sock = ctx.socket(zmq.PUB)
         sock.setsockopt(zmq.SNDHWM, 2)

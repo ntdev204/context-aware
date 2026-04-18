@@ -18,8 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
-from typing import List, Optional
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -38,14 +37,15 @@ JPEG_QUALITY = 85
 @dataclass
 class ExperienceFrame:
     """One fully-aligned data record per inference frame."""
+
     frame_id: int
-    timestamp: float                   # time.monotonic()
-    wall_time: float                   # time.time() for human readability
-    raw_image_jpeg: bytes              # JPEG compressed
+    timestamp: float  # time.monotonic()
+    wall_time: float  # time.time() for human readability
+    raw_image_jpeg: bytes  # JPEG compressed
     detections: FrameDetections
-    intent_predictions: List[IntentPrediction]
-    observation: np.ndarray            # shape (104*k,)  — OBS_DIM=104
-    action: np.ndarray                 # shape (7,) = [v_scale, h_offset, mode_oh×5]
+    intent_predictions: list[IntentPrediction]
+    observation: np.ndarray  # shape (104*k,)  — OBS_DIM=104
+    action: np.ndarray  # shape (7,) = [v_scale, h_offset, mode_oh×5]
     robot_state: RobotState
     session_id: str = ""
 
@@ -84,11 +84,11 @@ class ExperienceCollector:
         self,
         raw_frame: np.ndarray,
         frame_det: FrameDetections,
-        intent_preds: List[IntentPrediction],
+        intent_preds: list[IntentPrediction],
         observation: np.ndarray,
         cmd: NavigationCommand,
         robot_state: RobotState,
-    ) -> Optional[ExperienceFrame]:
+    ) -> ExperienceFrame | None:
         if not self.enabled:
             return None
 
@@ -96,9 +96,7 @@ class ExperienceCollector:
         wall = time.time()
 
         # JPEG compress
-        ok, buf = cv2.imencode(
-            ".jpg", raw_frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality]
-        )
+        ok, buf = cv2.imencode(".jpg", raw_frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
         if not ok:
             logger.warning("JPEG encode failed, frame %d skipped", self._frame_id)
             return None
