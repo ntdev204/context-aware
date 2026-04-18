@@ -40,5 +40,12 @@ src/communication/proto/*_pb2*.py
 # ── Env / secrets (contains IP, SSH key paths — never commit) ─────────
 env/sync.env
 
+# ── Research data (raw runs — large, machine-specific) ────────────────
+# Ignore raw per-run folders (config, env, metrics, artifacts)
+research_data/*/
+# But DO track the generated aggregate CSVs and README index
+!research_data/aggregated/
+!research_data/README.md
+
 # ── Agents ────────────────────────────────────────────────────────────
 .agent/
