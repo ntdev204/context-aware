@@ -68,4 +68,4 @@ jobs:
 
       - name: Build
         run: |
-          docker compose -f docker/docker-compose.yml --profile dev build dev
+          docker compose -f docker/docker-compose.yml --profile jetson-dev build jetson-dev
