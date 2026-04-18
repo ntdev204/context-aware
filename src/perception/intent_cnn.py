@@ -15,19 +15,18 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import List, Optional
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 # Intent class constants
-STATIONARY  = 0
+STATIONARY = 0
 APPROACHING = 1
-DEPARTING   = 2
-CROSSING    = 3
-FOLLOWING   = 4
-ERRATIC     = 5
+DEPARTING = 2
+CROSSING = 3
+FOLLOWING = 4
+ERRATIC = 5
 
 INTENT_NAMES = ["STATIONARY", "APPROACHING", "DEPARTING", "CROSSING", "FOLLOWING", "ERRATIC"]
 
@@ -35,12 +34,12 @@ INTENT_NAMES = ["STATIONARY", "APPROACHING", "DEPARTING", "CROSSING", "FOLLOWING
 @dataclass
 class IntentPrediction:
     track_id: int
-    intent_class: int            # argmax of probabilities
+    intent_class: int  # argmax of probabilities
     intent_name: str
-    probabilities: np.ndarray    # shape (6,)
-    dx: float                    # motion direction x [-1, 1]
-    dy: float                    # motion direction y [-1, 1]
-    confidence: float            # max probability
+    probabilities: np.ndarray  # shape (6,)
+    dx: float  # motion direction x [-1, 1]
+    dy: float  # motion direction y [-1, 1]
+    confidence: float  # max probability
     inference_ms: float = 0.0
 
 
@@ -52,8 +51,8 @@ class IntentCNN:
 
     def __init__(
         self,
-        model_path: Optional[str] = None,
-        use_tensorrt: bool = False,   # kept for API compat, ignored on Jetson
+        model_path: str | None = None,
+        use_tensorrt: bool = False,  # kept for API compat, ignored on Jetson
         max_batch_size: int = 5,
         device: str = "cuda",
     ) -> None:
@@ -62,7 +61,7 @@ class IntentCNN:
         self.max_batch_size = max_batch_size
         self.device = device
         self._model = None
-        self._dtype = None       # torch.float16 or torch.float32
+        self._dtype = None  # torch.float16 or torch.float32
         self._torch_device = None
 
     def load(self) -> None:
@@ -87,7 +86,9 @@ class IntentCNN:
 
         logger.info(
             "IntentCNN loaded [device=%s, dtype=%s, path=%s]",
-            self.device, self._dtype, self.model_path,
+            self.device,
+            self._dtype,
+            self.model_path,
         )
 
     def _build_model(self) -> None:
@@ -128,7 +129,7 @@ class IntentCNN:
         self._model.load_state_dict(state, strict=False)
         logger.info("IntentCNN weights loaded from %s", path)
 
-    def predict_batch(self, rois: list) -> List[IntentPrediction]:
+    def predict_batch(self, rois: list) -> list[IntentPrediction]:
         """Run inference on a list of PersonROI objects.
 
         Returns one IntentPrediction per ROI (same order as input).
@@ -150,34 +151,37 @@ class IntentCNN:
         elapsed_ms = (time.monotonic() - t0) * 1000
         per_ms = elapsed_ms / len(rois)
 
-        predictions: List[IntentPrediction] = []
+        predictions: list[IntentPrediction] = []
         for i, roi in enumerate(rois):
             probs = intent_probs[i]
             cls = int(np.argmax(probs))
-            predictions.append(IntentPrediction(
-                track_id=roi.track_id,
-                intent_class=cls,
-                intent_name=INTENT_NAMES[cls],
-                probabilities=probs,
-                dx=float(directions[i, 0]),
-                dy=float(directions[i, 1]),
-                confidence=float(probs[cls]),
-                inference_ms=per_ms,
-            ))
+            predictions.append(
+                IntentPrediction(
+                    track_id=roi.track_id,
+                    intent_class=cls,
+                    intent_name=INTENT_NAMES[cls],
+                    probabilities=probs,
+                    dx=float(directions[i, 0]),
+                    dy=float(directions[i, 1]),
+                    confidence=float(probs[cls]),
+                    inference_ms=per_ms,
+                )
+            )
 
         return predictions
 
     def _preprocess(self, images: list) -> np.ndarray:
         """BGR numpy (H,W,3) -> normalised float32 (N,3,H,W)."""
         import cv2
+
         mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-        std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
         tensors = []
         for img in images:
             rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             rgb = (rgb - mean) / std
-            tensors.append(rgb.transpose(2, 0, 1))   # HWC -> CHW
-        return np.stack(tensors, axis=0)              # (N, 3, H, W)
+            tensors.append(rgb.transpose(2, 0, 1))  # HWC -> CHW
+        return np.stack(tensors, axis=0)  # (N, 3, H, W)
 
     def _infer_pytorch(self, batch: np.ndarray):
         """Run PyTorch inference (FP16 on CUDA, FP32 on CPU)."""
@@ -187,7 +191,7 @@ class IntentCNN:
         with torch.no_grad():
             intent_logits, direction = self._model(x)
             probs = torch.softmax(intent_logits.float(), dim=-1).cpu().numpy()
-            dirs  = torch.tanh(direction.float()).cpu().numpy()
+            dirs = torch.tanh(direction.float()).cpu().numpy()
         return probs, dirs
 
 
@@ -197,7 +201,7 @@ try:
     import torch.nn as nn
 
     class _IntentModel(nn.Module):
-        def __init__(self, backbone: "nn.Module", feature_dim: int) -> None:
+        def __init__(self, backbone: nn.Module, feature_dim: int) -> None:
             super().__init__()
             self.backbone = backbone
             self.pool = nn.AdaptiveAvgPool2d(1)

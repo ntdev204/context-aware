@@ -20,10 +20,10 @@ def draw_detections(
         x1, y1, x2, y2 = p.bbox
         label = f"ID:{p.track_id} {p.intent_name} {p.intent_confidence:.0%}"
         cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 200, 0), 2)
-        cv2.putText(vis, label, (x1, max(y1 - 6, 0)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3)
-        cv2.putText(vis, label, (x1, max(y1 - 6, 0)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
+        cv2.putText(vis, label, (x1, max(y1 - 6, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3)
+        cv2.putText(
+            vis, label, (x1, max(y1 - 6, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1
+        )
 
     for ob in obstacles:
         x1, y1, x2, y2 = ob.bbox

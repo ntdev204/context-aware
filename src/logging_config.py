@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
-import os
 import sys
 from pathlib import Path
 
@@ -32,18 +31,18 @@ _NOISY_LOGGERS = (
     "asyncio",
 )
 
-_LOG_FORMAT      = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _LOG_FORMAT_CONS = "%(asctime)s [%(levelname)-8s] %(message)s"
-_DATE_FORMAT     = "%Y-%m-%d %H:%M:%S"
-_MAX_BYTES       = 10 * 1024 * 1024   # 10 MB
-_BACKUP_COUNT    = 5
+_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+_BACKUP_COUNT = 5
 
 _LEVEL_COLORS = {
-    "DEBUG":    "\033[36m",     # cyan
-    "INFO":     "\033[32m",     # green
-    "WARNING":  "\033[33m",     # yellow
-    "ERROR":    "\033[31m",     # red
-    "CRITICAL": "\033[1;31m",   # bold red
+    "DEBUG": "\033[36m",  # cyan
+    "INFO": "\033[32m",  # green
+    "WARNING": "\033[33m",  # yellow
+    "ERROR": "\033[31m",  # red
+    "CRITICAL": "\033[1;31m",  # bold red
 }
 _RESET = "\033[0m"
 
@@ -65,11 +64,11 @@ class ColoredFormatter(logging.Formatter):
 
 # Component → logger name prefix mapping
 _COMPONENT_LOGGERS: dict[str, str] = {
-    "perception":    "src.perception",
-    "navigation":    "src.navigation",
-    "experience":    "src.experience",
+    "perception": "src.perception",
+    "navigation": "src.navigation",
+    "experience": "src.experience",
     "communication": "src.communication",
-    "server":        "src.main",
+    "server": "src.main",
 }
 
 
@@ -89,10 +88,18 @@ def _rotating_handler(path: Path, level: int) -> logging.handlers.RotatingFileHa
 class _LifecycleFilter(logging.Filter):
     """Allow ERROR+ OR specific lifecycle keywords through the console handler."""
 
-    _KEYWORDS = frozenset({
-        "starting", "started", "stopped", "stopping",
-        "shutdown", "loaded", "ready", "exiting",
-    })
+    _KEYWORDS = frozenset(
+        {
+            "starting",
+            "started",
+            "stopped",
+            "stopping",
+            "shutdown",
+            "loaded",
+            "ready",
+            "exiting",
+        }
+    )
 
     def filter(self, record: logging.LogRecord) -> bool:
         if record.levelno >= logging.ERROR:
@@ -162,11 +169,11 @@ def _setup_production(log_dir: Path, cfg) -> None:
 
     # Per-component file handlers with optional level overrides from YAML
     component_files = {
-        "perception":    log_dir / "perception.log",
-        "navigation":    log_dir / "navigation.log",
-        "experience":    log_dir / "experience.log",
+        "perception": log_dir / "perception.log",
+        "navigation": log_dir / "navigation.log",
+        "experience": log_dir / "experience.log",
         "communication": log_dir / "communication.log",
-        "server":        log_dir / "server.log",
+        "server": log_dir / "server.log",
     }
 
     for component, log_path in component_files.items():
@@ -177,7 +184,7 @@ def _setup_production(log_dir: Path, cfg) -> None:
 
         comp_logger = logging.getLogger(logger_name)
         comp_logger.setLevel(level)
-        comp_logger.propagate = True   # still reaches root (errors.log + console)
+        comp_logger.propagate = True  # still reaches root (errors.log + console)
         comp_logger.addHandler(_rotating_handler(log_path, level))
 
     # High-frequency safety debug messages: only let WARNING+ through
@@ -186,4 +193,3 @@ def _setup_production(log_dir: Path, cfg) -> None:
     # Suppress API / streaming access logs
     for name in ("src.api", "src.streaming"):
         logging.getLogger(name).setLevel(logging.WARNING)
-

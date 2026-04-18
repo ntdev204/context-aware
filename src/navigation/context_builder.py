@@ -26,22 +26,21 @@ import math
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
 
 import numpy as np
 
-from ..perception.intent_cnn import ERRATIC, IntentPrediction
+from ..perception.intent_cnn import IntentPrediction
 from ..perception.yolo_detector import DetectionResult, FrameDetections
-from .nav_command import NavigationCommand, NavigationMode
+from .nav_command import NavigationCommand
 
 logger = logging.getLogger(__name__)
 
-OBS_DIM       = 104
-GRID_SIZE     = 8       # 8×8 occupancy grid
-MAX_PERSONS   = 3       # top-k persons included in observation
-INTENT_FEATS  = 8       # 6 intent probs + dx + dy per person
-MAX_DIST      = 5.0     # metres — clamp for normalisation
-NUM_MODES     = 5
+OBS_DIM = 104
+GRID_SIZE = 8  # 8×8 occupancy grid
+MAX_PERSONS = 3  # top-k persons included in observation
+INTENT_FEATS = 8  # 6 intent probs + dx + dy per person
+MAX_DIST = 5.0  # metres — clamp for normalisation
+NUM_MODES = 5
 
 
 @dataclass
@@ -79,7 +78,7 @@ class ContextBuilder:
         self.grid_size = occupancy_grid_size
 
         self._history: deque[np.ndarray] = deque(maxlen=temporal_stack_size)
-        self._prev_action: Optional[NavigationCommand] = None
+        self._prev_action: NavigationCommand | None = None
         self._robot_state = RobotState()
 
     # ------------------------------------------------------------------
@@ -94,7 +93,7 @@ class ContextBuilder:
     def build(
         self,
         frame_det: FrameDetections,
-        intent_preds: List[IntentPrediction],
+        intent_preds: list[IntentPrediction],
     ) -> np.ndarray:
         """Build one observation snapshot and push to history ring-buffer.
 
@@ -131,11 +130,11 @@ class ContextBuilder:
     def _build_snapshot(
         self,
         frame_det: FrameDetections,
-        intent_preds: List[IntentPrediction],
+        intent_preds: list[IntentPrediction],
     ) -> np.ndarray:
         obs = np.zeros(OBS_DIM, dtype=np.float32)
 
-        persons   = frame_det.persons
+        persons = frame_det.persons
         obstacles = frame_det.obstacles
 
         # -- Scene encoding [0:6] -----------------------------------
@@ -146,7 +145,7 @@ class ContextBuilder:
             obs[1] = nearest_p.distance / MAX_DIST
             obs[2] = self._angle_from_bbox(nearest_p, frame_det.frame_width)
         else:
-            obs[1] = 1.0   # far
+            obs[1] = 1.0  # far
             obs[2] = 0.0
 
         if obstacles:
@@ -188,7 +187,7 @@ class ContextBuilder:
             obs[98] = self._prev_action.heading_offset / (math.pi / 4)
             mode_oh = np.zeros(NUM_MODES, dtype=np.float32)
             mode_oh[int(self._prev_action.mode)] = 1.0
-            obs[99:104] = mode_oh   # all 5 modes fit in 5 slots
+            obs[99:104] = mode_oh  # all 5 modes fit in 5 slots
         # else: zeros
 
         return obs
@@ -216,15 +215,13 @@ class ContextBuilder:
         return grid
 
     @staticmethod
-    def _nearest(dets: List[DetectionResult]) -> DetectionResult:
+    def _nearest(dets: list[DetectionResult]) -> DetectionResult:
         """Return detection with the smallest actual distance (metres).
 
         Uses DetectionResult.distance which is populated by the hybrid
         estimator (depth camera primary, bbox heuristic fallback).
         """
         return min(dets, key=lambda d: d.distance)
-
-
 
     @staticmethod
     def _angle_from_bbox(det: DetectionResult, frame_width: int) -> float:

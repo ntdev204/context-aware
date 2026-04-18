@@ -5,39 +5,38 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
 
 import numpy as np
 
 # Astra S valid depth range in millimetres
 _DEPTH_MIN_MM: float = 400.0
 _DEPTH_MAX_MM: float = 2000.0
-_DEPTH_MIN_VALID_PIXELS: int = 5   # minimum pixels in ROI that must be valid
-_DEPTH_ROI_HALF: int = 5           # half-size of 10×10 sampling window
+_DEPTH_MIN_VALID_PIXELS: int = 5  # minimum pixels in ROI that must be valid
+_DEPTH_ROI_HALF: int = 5  # half-size of 10×10 sampling window
 
 logger = logging.getLogger(__name__)
 
 CLASS_NAMES = [
-    "person", 
-    "obstacle",          # Legacy fallback
-    "static_obstacle",   # Tĩnh: kiện hàng, bàn ghế, cột
-    "dynamic_hazard",    # Động: xe đẩy hành lý, vali bị rớt, quả bóng
-    "door", 
-    "wall", 
-    "free_space"
+    "person",
+    "obstacle",  # Legacy fallback
+    "static_obstacle",  # Tĩnh: kiện hàng, bàn ghế, cột
+    "dynamic_hazard",  # Động: xe đẩy hành lý, vali bị rớt, quả bóng
+    "door",
+    "wall",
+    "free_space",
 ]
 CLASS_IDS = {name: idx for idx, name in enumerate(CLASS_NAMES)}
 
 
 @dataclass
 class DetectionResult:
-    bbox: tuple[int, int, int, int]   # x1, y1, x2, y2 (pixel coords)
+    bbox: tuple[int, int, int, int]  # x1, y1, x2, y2 (pixel coords)
     class_id: int
     class_name: str
     confidence: float
-    track_id: int = -1                # assigned by tracker
-    distance: float = 0.0             # calibrated physical distance in metres
-    distance_source: str = "bbox"     # "depth" | "bbox"
+    track_id: int = -1  # assigned by tracker
+    distance: float = 0.0  # calibrated physical distance in metres
+    distance_source: str = "bbox"  # "depth" | "bbox"
     intent_class: int = -1
     intent_name: str = "UNKNOWN"
     intent_confidence: float = 0.0
@@ -47,9 +46,9 @@ class DetectionResult:
 
 @dataclass
 class FrameDetections:
-    persons: List[DetectionResult] = field(default_factory=list)
-    obstacles: List[DetectionResult] = field(default_factory=list)
-    all_detections: List[DetectionResult] = field(default_factory=list)
+    persons: list[DetectionResult] = field(default_factory=list)
+    obstacles: list[DetectionResult] = field(default_factory=list)
+    all_detections: list[DetectionResult] = field(default_factory=list)
     free_space_ratio: float = 1.0
     timestamp: float = 0.0
     frame_id: int = 0
@@ -80,8 +79,8 @@ class YOLODetector:
 
     def load(self) -> None:
         """Load model — call once before inference loop."""
-        from ultralytics import YOLO
         import torch
+        from ultralytics import YOLO
 
         # Auto-detect device if cuda requested but not available
         if self.device == "cuda" and not torch.cuda.is_available():
@@ -93,22 +92,30 @@ class YOLODetector:
         # Warm-up pass — dummy matches engine input shape (H, W)
         if isinstance(self.input_size, (list, tuple)):
             h, w = self.input_size
-            self.input_size = (h, w)   # normalize list → tuple
+            self.input_size = (h, w)  # normalize list → tuple
         else:
             h = w = self.input_size
         dummy = np.zeros((h, w, 3), dtype=np.uint8)
         self._model.predict(
-            dummy, verbose=False, conf=self.conf, iou=self.iou, device=self.device,
+            dummy,
+            verbose=False,
+            conf=self.conf,
+            iou=self.iou,
+            device=self.device,
         )
 
-        logger.info("YOLO loaded: %s [device=%s, TensorRT=%s]",
-                   self.model_path, self.device, self.use_tensorrt)
+        logger.info(
+            "YOLO loaded: %s [device=%s, TensorRT=%s]",
+            self.model_path,
+            self.device,
+            self.use_tensorrt,
+        )
 
     def detect(
         self,
         frame: np.ndarray,
         frame_id: int = 0,
-        depth_frame: Optional[np.ndarray] = None,
+        depth_frame: np.ndarray | None = None,
     ) -> FrameDetections:
         """Run inference on *frame* (BGR numpy array). Returns FrameDetections.
 
@@ -150,12 +157,12 @@ class YOLODetector:
 
         for box in boxes:
             cls_id = int(box.cls[0])
-            raw_name = results[0].names[cls_id] # Lấy tên gốc của class từ weights
+            raw_name = results[0].names[cls_id]  # Lấy tên gốc của class từ weights
             class_name = self._map_to_nav_class(raw_name)
-            
+
             if class_name == "ignore":
                 continue
-                
+
             conf = float(box.conf[0])
             x1, y1, x2, y2 = (int(v) for v in box.xyxy[0])
 
@@ -180,7 +187,9 @@ class YOLODetector:
             elif class_name == "free_space":
                 free_pixels += (x2 - x1) * (y2 - y1)
 
-        frame_det.free_space_ratio = min(1.0, free_pixels / total_pixels) if total_pixels > 0 else 1.0
+        frame_det.free_space_ratio = (
+            min(1.0, free_pixels / total_pixels) if total_pixels > 0 else 1.0
+        )
         return frame_det
 
     @staticmethod
@@ -189,35 +198,44 @@ class YOLODetector:
         # 1. Nếu đang dùng Model Custom (đã có sẵn các chữ chuẩn)
         if raw_name in CLASS_NAMES:
             return raw_name
-            
+
         # 2. Nếu đang dùng Model COCO 80 Class (Chưa train)
         if raw_name == "person":
             return "person"
-            
+
         # Nhóm đồ có thể chuyển động, bị ném/trượt, hoặc kéo đi (hành lý, thùng)
         # Balo, vali, túi xách thường là hành lý sân bay. Quả bóng đại diện cho vật thể ném.
         dynamic_keywords = {"sports ball", "frisbee", "backpack", "suitcase", "handbag", "umbrella"}
         if raw_name in dynamic_keywords:
             return "dynamic_hazard"
-            
+
         # Nhóm vật cản tĩnh (ghế chờ, bàn, cây cảnh)
         static_keywords = {
-            "bench", "chair", "couch", "potted plant", "dining table", 
-            "tv", "laptop"
+            "bench",
+            "chair",
+            "couch",
+            "potted plant",
+            "dining table",
+            "tv",
+            "laptop",
         }
         if raw_name in static_keywords:
             return "static_obstacle"
-            
+
         # Vụng vặt không cản đường (ly, chén, nĩa, sách) thì bỏ qua
         return "ignore"
 
     @staticmethod
     def _estimate_distance(
-        x1: int, y1: int, x2: int, y2: int,
-        frame_h: int, frame_w: int,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        frame_h: int,
+        frame_w: int,
         class_name: str,
-        depth_frame: Optional[np.ndarray],
-    ) -> Tuple[float, str]:
+        depth_frame: np.ndarray | None,
+    ) -> tuple[float, str]:
         """Hybrid distance estimation: depth camera primary, bbox heuristic fallback.
 
         Returns

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import zmq
 
@@ -35,9 +35,9 @@ class ZMQSubscriber:
         self.rasp_pi_ip = rasp_pi_ip
         self.watchdog_timeout_ms = watchdog_timeout_ms
 
-        self._ctx: Optional[zmq.Context] = None
-        self._sock: Optional[zmq.Socket] = None
-        self._thread: Optional[threading.Thread] = None
+        self._ctx: zmq.Context | None = None
+        self._sock: zmq.Socket | None = None
+        self._thread: threading.Thread | None = None
         self._running = False
 
         # Shared state (updated by background thread, read by main thread)
@@ -46,8 +46,8 @@ class ZMQSubscriber:
         self._last_received_ts = time.monotonic()
 
         # Optional callbacks
-        self._on_state: Optional[Callable[[RobotState], None]] = None
-        self._on_timeout: Optional[Callable[[], None]] = None
+        self._on_state: Callable[[RobotState], None] | None = None
+        self._on_timeout: Callable[[], None] | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -60,10 +60,10 @@ class ZMQSubscriber:
         on_state:   called with new RobotState whenever a message arrives
         on_timeout: called when watchdog fires (no message within timeout)
         """
-        self._on_state   = on_state
+        self._on_state = on_state
         self._on_timeout = on_timeout
 
-        self._ctx  = zmq.Context()
+        self._ctx = zmq.Context()
         self._sock = self._ctx.socket(zmq.SUB)
         self._sock.setsockopt(zmq.RCVHWM, 2)
         self._sock.setsockopt(zmq.LINGER, 0)
@@ -72,7 +72,7 @@ class ZMQSubscriber:
         self._sock.connect(f"tcp://{self.rasp_pi_ip}:{self.port}")
 
         self._running = True
-        self._thread  = threading.Thread(target=self._recv_loop, daemon=True, name="zmq-sub")
+        self._thread = threading.Thread(target=self._recv_loop, daemon=True, name="zmq-sub")
         self._thread.start()
         logger.info("ZMQ Subscriber connected to %s:%d", self.rasp_pi_ip, self.port)
 
@@ -148,6 +148,7 @@ class ZMQSubscriber:
     def _decode(data: bytes) -> RobotState:
         try:
             from .proto import messages_pb2 as pb
+
             msg = pb.RobotState()
             msg.ParseFromString(data)
             return RobotState(

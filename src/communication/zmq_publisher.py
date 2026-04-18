@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
-from typing import Optional
 
 try:
     import zmq
@@ -41,9 +39,9 @@ class ZMQPublisher:
         self.det_port = detections_port
         self.bind_host = bind_host
 
-        self._ctx: Optional[zmq.Context] = None
-        self._nav_sock: Optional[zmq.Socket] = None
-        self._det_sock: Optional[zmq.Socket] = None
+        self._ctx: zmq.Context | None = None
+        self._nav_sock: zmq.Socket | None = None
+        self._det_sock: zmq.Socket | None = None
         self._lock = threading.Lock()
         self._det_frame_count = 0
 
@@ -58,7 +56,8 @@ class ZMQPublisher:
 
         logger.info(
             "ZMQ Publisher started -- nav_cmd:%d  detections:%d",
-            self.nav_port, self.det_port,
+            self.nav_port,
+            self.det_port,
         )
 
     def stop(self) -> None:
@@ -77,11 +76,9 @@ class ZMQPublisher:
         try:
             payload = self._encode_nav_cmd(cmd)
             with self._lock:
-                self._nav_sock.send_multipart(
-                    [b"ai/nav_cmd", payload], flags=zmq.NOBLOCK
-                )
+                self._nav_sock.send_multipart([b"ai/nav_cmd", payload], flags=zmq.NOBLOCK)
         except zmq.Again:
-            pass   # subscriber too slow — drop (SNDHWM handles this)
+            pass  # subscriber too slow — drop (SNDHWM handles this)
         except Exception as exc:
             logger.error("nav_cmd publish error: %s", exc)
 
@@ -93,9 +90,7 @@ class ZMQPublisher:
         try:
             payload = self._encode_detections(frame_det)
             with self._lock:
-                self._det_sock.send_multipart(
-                    [b"ai/detections", payload], flags=zmq.NOBLOCK
-                )
+                self._det_sock.send_multipart([b"ai/detections", payload], flags=zmq.NOBLOCK)
         except zmq.Again:
             pass
         except Exception as exc:
@@ -121,17 +116,19 @@ class ZMQPublisher:
         """
         try:
             from .proto import messages_pb2 as pb
+
             msg = pb.NavigationCommand()
-            msg.mode           = int(cmd.mode)
+            msg.mode = int(cmd.mode)
             msg.velocity_scale = cmd.velocity_scale
             msg.heading_offset = cmd.heading_offset
             msg.follow_target_id = cmd.follow_target_id
-            msg.timestamp      = cmd.timestamp
-            msg.confidence     = cmd.confidence
+            msg.timestamp = cmd.timestamp
+            msg.confidence = cmd.confidence
             msg.safety_override = cmd.safety_override
             return msg.SerializeToString()
         except (ImportError, AttributeError):
             import struct
+
             return struct.pack(
                 "!iffiffB",
                 int(cmd.mode),
@@ -147,13 +144,14 @@ class ZMQPublisher:
     def _encode_detections(frame_det: FrameDetections) -> bytes:
         try:
             from .proto import messages_pb2 as pb
+
             msg = pb.DetectionList()
             msg.timestamp = frame_det.timestamp
-            msg.frame_id  = frame_det.frame_id
+            msg.frame_id = frame_det.frame_id
             msg.free_space_ratio = frame_det.free_space_ratio
             for d in frame_det.all_detections:
                 det = msg.detections.add()
-                det.track_id   = d.track_id
+                det.track_id = d.track_id
                 det.x1, det.y1, det.x2, det.y2 = d.bbox
                 det.class_name = d.class_name
                 det.confidence = d.confidence
@@ -163,4 +161,4 @@ class ZMQPublisher:
                 det.dy = d.dy
             return msg.SerializeToString()
         except (ImportError, AttributeError):
-            return b""   # graceful degradation without proto
+            return b""  # graceful degradation without proto

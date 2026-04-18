@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import List
 
 from ..perception.intent_cnn import ERRATIC, IntentPrediction
 from ..perception.yolo_detector import FrameDetections
@@ -36,12 +35,12 @@ class SafetyMonitor:
         battery_threshold: float = 10.0,
         watchdog_log_interval_s: float = 5.0,
     ) -> None:
-        self.hard_stop_person        = hard_stop_person
-        self.hard_stop_obstacle      = hard_stop_obstacle
-        self.slow_down_distance      = slow_down_distance
-        self.slow_down_factor        = slow_down_factor
-        self.watchdog_timeout_ms     = watchdog_timeout_ms
-        self.battery_threshold       = battery_threshold
+        self.hard_stop_person = hard_stop_person
+        self.hard_stop_obstacle = hard_stop_obstacle
+        self.slow_down_distance = slow_down_distance
+        self.slow_down_factor = slow_down_factor
+        self.watchdog_timeout_ms = watchdog_timeout_ms
+        self.battery_threshold = battery_threshold
         self.watchdog_log_interval_s = watchdog_log_interval_s
 
         self._last_robot_state_ts: float = time.monotonic()
@@ -56,11 +55,9 @@ class SafetyMonitor:
         self,
         cmd: NavigationCommand,
         frame_det: FrameDetections,
-        intent_preds: List[IntentPrediction],
+        intent_preds: list[IntentPrediction],
     ) -> NavigationCommand:
         """Apply Layer 2 safety rules.  Returns (possibly modified) cmd."""
-
-        original_mode = cmd.mode
 
         elapsed_ms = (time.monotonic() - self._last_robot_state_ts) * 1000
         if elapsed_ms > self.watchdog_timeout_ms and cmd.mode != NavigationMode.STOP:
@@ -68,9 +65,11 @@ class SafetyMonitor:
             return self._emergency_stop(cmd, "watchdog_timeout")
 
         # Layer 3-b: Battery critical
-        if (self._robot_state and
-                self._robot_state.battery_percent < self.battery_threshold and
-                cmd.mode != NavigationMode.STOP):
+        if (
+            self._robot_state
+            and self._robot_state.battery_percent < self.battery_threshold
+            and cmd.mode != NavigationMode.STOP
+        ):
             logger.warning("Battery critical (%.1f%%) — STOP", self._robot_state.battery_percent)
             return self._emergency_stop(cmd, "battery_critical")
 
@@ -91,7 +90,9 @@ class SafetyMonitor:
         # ERRATIC intent override
         for pred in intent_preds:
             if pred.intent_class == ERRATIC and pred.confidence > 0.6:
-                logger.warning("ERRATIC person (track=%d conf=%.2f) — STOP", pred.track_id, pred.confidence)
+                logger.warning(
+                    "ERRATIC person (track=%d conf=%.2f) — STOP", pred.track_id, pred.confidence
+                )
                 return self._emergency_stop(cmd, "erratic_intent")
 
         # Slow-down zone (proportional reduction)
@@ -100,7 +101,9 @@ class SafetyMonitor:
             if cmd.velocity_scale > factor:
                 cmd.velocity_scale = factor
                 cmd.safety_override = True
-                logger.debug("Safety slow-down: v→%.2f (person at %.2f m)", factor, nearest_person_dist)
+                logger.debug(
+                    "Safety slow-down: v→%.2f (person at %.2f m)", factor, nearest_person_dist
+                )
 
         return cmd.clip()
 
@@ -112,11 +115,11 @@ class SafetyMonitor:
 
     @staticmethod
     def _emergency_stop(cmd: NavigationCommand, reason: str) -> NavigationCommand:
-        cmd.mode            = NavigationMode.STOP
-        cmd.velocity_scale  = 0.0
-        cmd.heading_offset  = 0.0
+        cmd.mode = NavigationMode.STOP
+        cmd.velocity_scale = 0.0
+        cmd.heading_offset = 0.0
         cmd.safety_override = True
-        cmd.confidence      = 1.0
+        cmd.confidence = 1.0
         return cmd
 
     @staticmethod
