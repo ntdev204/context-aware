@@ -56,10 +56,11 @@ class _FallbackTracker:
         if not self._tracks:
             for det in detections:
                 self._tracks[self._next_id] = {"bbox": det.bbox, "age": 0, "hits": 1}
+                if self.min_hits <= 1:
+                    det.track_id = self._next_id
                 self._next_id += 1
-            # None of the new tracks have enough hits yet
             self._age_tracks()
-            return []
+            return [d for d in detections if d.track_id != -1]
 
         matched_ids: set[int] = set()
         for det in detections:
@@ -78,8 +79,9 @@ class _FallbackTracker:
                     det.track_id = best_id
             else:
                 self._tracks[self._next_id] = {"bbox": det.bbox, "age": 0, "hits": 1}
+                if self.min_hits <= 1:
+                    det.track_id = self._next_id
                 self._next_id += 1
-                # track_id stays -1 (unconfirmed)
 
         self._age_tracks()
         return [d for d in detections if d.track_id != -1]
