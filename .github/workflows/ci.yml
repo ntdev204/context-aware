@@ -57,8 +57,8 @@ jobs:
           name: coverage
           path: coverage.xml
 
-  docker-dev:
-    name: Build dev image
+  docker-server:
+    name: Build server image
     runs-on: ubuntu-latest
     needs: test
     steps:
@@ -68,4 +68,4 @@ jobs:
 
       - name: Build
         run: |
-          docker compose -f docker/docker-compose.yml --profile jetson-dev build jetson-dev
+          docker compose -f docker/docker-compose.yml --profile server build server-train
