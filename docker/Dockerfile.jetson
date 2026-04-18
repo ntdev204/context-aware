@@ -1,0 +1,96 @@
+# docker/Dockerfile.jetson -- NVIDIA Jetson Orin Nano Super (ARM64)
+#
+# Base  : dustynv/l4t-pytorch -- pre-built for JetPack 6.x
+# GPU   : CUDA 12.2 + cuDNN 9 + TensorRT 8.6 (from L4T base image)
+# Arch  : linux/arm64
+#
+# Build (on Jetson only -- ARM64):
+#   make jetson-build-dev
+#   make jetson-build-prod
+
+ARG L4T_TAG=r36.2.0
+FROM dustynv/l4t-pytorch:${L4T_TAG} AS jetson-base
+
+# dustynv base image sets PIP_INDEX_URL to a local wheel server that is
+# not running during docker build -- causing retry timeouts per package.
+# Override to force PyPI. CUDA/TensorRT are already in the base image.
+ENV PIP_INDEX_URL=https://pypi.org/simple \
+    PIP_EXTRA_INDEX_URL=https://pypi.org/simple \
+    PIP_RETRIES=1 \
+    PIP_NO_CACHE_DIR=1
+
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    build-essential \
+    libglib2.0-0 \
+    libgl1 \
+    libgomp1 \
+    libusb-1.0-0 \
+    libudev-dev \
+    usbutils \
+    python-is-python3 \
+    rsync \
+    openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Orbbec Astra S (PID 0x0402) driver.
+# The standard libopenni2-0 apt package does not enumerate this PID.
+# We extract the pre-compiled ARM64 binaries from Orbbec's public ROS repository.
+RUN mkdir -p /tmp/orbbec && \
+    curl -L https://github.com/orbbec/ros_astra_camera/archive/refs/heads/master.tar.gz \
+        | tar -xz -C /tmp/orbbec --strip-components=1 && \
+    mkdir -p /usr/lib/OpenNI2/Drivers && \
+    cp /tmp/orbbec/include/openni2_redist/arm64/libOpenNI2.so /usr/lib/libOpenNI2.so && \
+    cp -r /tmp/orbbec/include/openni2_redist/arm64/OpenNI2/Drivers/* /usr/lib/OpenNI2/Drivers/ && \
+    ldconfig && \
+    rm -rf /tmp/orbbec
+
+WORKDIR /app
+
+COPY requirements.txt pyproject.toml ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# dustynv builds torchvision from source (no pip metadata).
+# Fake the metadata so Ultralytics version check passes.
+RUN mkdir -p /usr/local/lib/python3.10/dist-packages/torchvision-0.17.0.dist-info && \
+    printf "Metadata-Version: 2.1\nName: torchvision\nVersion: 0.17.0\n" \
+    > /usr/local/lib/python3.10/dist-packages/torchvision-0.17.0.dist-info/METADATA
+
+ENV YOLO_OFFLINE=True \
+    ULTRALYTICS_TELEMETRY=0
+
+RUN pip install --no-cache-dir --no-deps ultralytics==8.3.0
+
+COPY . .
+
+# Fail the build if proto generation fails -- do not silently skip.
+RUN python scripts/generate_proto.py
+
+RUN mkdir -p models/yolo models/cnn_intent models/rl_policy /app/logs/experience /app/config
+
+EXPOSE 5555 5556 5560 5570 50051 8080
+
+# -- Stage: jetson-dev (interactive development) ----------------------------
+FROM jetson-base AS jetson-dev
+
+RUN pip install --no-cache-dir pytest pytest-asyncio pytest-mock ruff httpx
+
+ENV CUDA_MODULE_LOADING=LAZY \
+    MODE=production
+
+RUN pip install -e .
+
+CMD ["/bin/bash"]
+
+# -- Stage: jetson-prod (production -- minimal) ----------------------------
+FROM jetson-base AS jetson-prod
+
+ENV CUDA_MODULE_LOADING=LAZY \
+    MODE=production
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python scripts/health_check.py || exit 1
+
+CMD ["python", "-m", "src.main"]

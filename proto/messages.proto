@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package context_aware;
+
+// ═══════════════════════════════════════════════════════
+// Enums
+// ═══════════════════════════════════════════════════════
+
+enum NavigationMode {
+  CRUISE   = 0;
+  CAUTIOUS = 1;
+  AVOID    = 2;
+  FOLLOW   = 3;
+  STOP     = 4;
+}
+
+enum IntentClass {
+  STATIONARY  = 0;
+  APPROACHING = 1;
+  DEPARTING   = 2;
+  CROSSING    = 3;
+  FOLLOWING   = 4;
+  ERRATIC     = 5;
+}
+
+// ═══════════════════════════════════════════════════════
+// Jetson → RasPi
+// ═══════════════════════════════════════════════════════
+
+message NavigationCommand {
+  NavigationMode mode         = 1;
+  float velocity_scale        = 2;  // [0.0, 1.0]
+  float heading_offset        = 3;  // radians [-π/4, π/4]
+  int32 follow_target_id      = 4;  // track_id, -1 = none
+  double timestamp            = 5;
+  float confidence            = 6;  // policy confidence [0, 1]
+  bool safety_override        = 7;  // true if safety monitor changed original cmd
+}
+
+message Detection {
+  int32  track_id          = 1;
+  float  x1               = 2;
+  float  y1               = 3;
+  float  x2               = 4;
+  float  y2               = 5;
+  string class_name        = 6;
+  float  confidence        = 7;
+  IntentClass intent_class = 8;
+  float  intent_confidence = 9;
+  float  dx               = 10;  // motion direction x [-1, 1]
+  float  dy               = 11;  // motion direction y [-1, 1]
+}
+
+message DetectionList {
+  repeated Detection detections = 1;
+  double timestamp              = 2;
+  int32  frame_id               = 3;
+  float  free_space_ratio       = 4;
+}
+
+// ═══════════════════════════════════════════════════════
+// RasPi → Jetson
+// ═══════════════════════════════════════════════════════
+
+message RobotState {
+  float  vx              = 1;   // m/s
+  float  vy              = 2;   // m/s
+  float  vtheta          = 3;   // rad/s
+  float  pos_x           = 4;
+  float  pos_y           = 5;
+  float  pos_theta       = 6;
+  float  battery_percent = 7;
+  string nav2_status     = 8;   // "idle" | "navigating" | "stuck"
+  double timestamp       = 9;
+}
+
+// ═══════════════════════════════════════════════════════
+// Config / Mode Change (REQ/REP)
+// ═══════════════════════════════════════════════════════
+
+message ConfigRequest {
+  string key   = 1;
+  string value = 2;
+}
+
+message ConfigResponse {
+  bool   success = 1;
+  string message = 2;
+}

@@ -1,0 +1,44 @@
+# ── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# ── Virtual environments ────────────────────────────────────────────
+.venv/
+venv/
+
+# ── Model binaries (lớn, mount qua volume) ─────────────────────────
+models/*.engine
+models/*.pt
+models/*.onnx
+models/**/*.engine
+models/**/*.pt
+models/**/*.onnx
+
+# ── Experience logs ─────────────────────────────────────────────────
+logs/
+*.h5
+*.hdf5
+
+# ── IDE ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ── Generated proto ─────────────────────────────────────────────────
+src/communication/proto/*_pb2*.py
+
+# ── Env / secrets (contains IP, SSH key paths — never commit) ─────────
+env/sync.env
+
+# ── Agents ────────────────────────────────────────────────────────────
+.agent/

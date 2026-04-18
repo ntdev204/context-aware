@@ -1,0 +1,149 @@
+
+networks:
+  robot-net:
+    driver: bridge
+
+services:
+
+
+
+  # Jetson dev: ARM64 + CUDA (interactive)
+  jetson-dev:
+    profiles: ["jetson-dev"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.jetson
+      target: jetson-dev
+    image: context-aware:jetson-dev
+    container_name: context-aware-jetson-dev
+    runtime: nvidia
+    privileged: true
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - CUDA_MODULE_LOADING=LAZY
+      - MODE=production
+      - PYTHONPATH=/app
+    volumes:
+      - ..:/app
+    devices:
+      - "/dev/bus/usb:/dev/bus/usb"
+    ports:
+      - "5555:5555"
+      - "5556:5556"
+      - "5560:5560"
+      - "5570:5570"
+      - "50051:50051"
+      - "8080:8080"
+    networks: [robot-net]
+    command: /bin/bash
+    stdin_open: true
+    tty: true
+    restart: "no"
+
+  # Jetson prod: ARM64 + CUDA (auto-restart)
+  jetson-prod:
+    profiles: ["jetson-prod"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.jetson
+      target: jetson-prod
+    image: context-aware:jetson-prod
+    container_name: context-aware-prod
+    runtime: nvidia
+    privileged: true
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - CUDA_MODULE_LOADING=LAZY
+      - MODE=production
+      - CONFIG_PATH=/app/config/production.yaml
+    volumes:
+      - ../models:/app/models
+      - ../logs:/app/logs
+      - ../config:/app/config:ro
+    devices:
+      - "/dev/bus/usb:/dev/bus/usb"
+    ports:
+      - "5555:5555"
+      - "5556:5556"
+      - "5560:5560"
+      - "5570:5570"
+      - "50051:50051"
+      - "8080:8080"
+    networks: [robot-net]
+    restart: unless-stopped
+    mem_limit: 3g
+    memswap_limit: 4g
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  jetson-sync:
+    profiles: ["jetson-prod"]
+    image: context-aware:jetson-prod   # reuse existing image — no extra build
+    container_name: context-aware-sync
+    depends_on:
+      - jetson-prod
+    env_file:
+      - path: ../env/sync.env
+        required: false          # skip gracefully if file missing (sync disabled)
+    environment:
+      - SYNC_LOG_DIR=/app/logs/experience
+      - SYNC_SSH_KEY=/root/.ssh/sync_key
+    volumes:
+      - ../logs:/app/logs                        # shared with jetson-prod
+      - ${HOME}/.ssh:/root/.ssh:ro               # SSH keys from Jetson host
+    networks: [robot-net]
+    restart: unless-stopped
+    command: >
+      sh -c '
+        if [ -z "$$SYNC_TARGET" ]; then
+          echo "[sync] SYNC_TARGET not set — create env/sync.env to enable auto-sync. Sleeping.";
+          sleep infinity;
+        fi;
+        python scripts/sync_experience.py
+      '
+
+  # Server Training (x86_64 + CUDA)
+  server-train:
+    profiles: ["server"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.server
+    image: context-aware:server
+    container_name: context-aware-server
+    volumes:
+      - roi-incoming:/data/roi_incoming      # batches từ Jetson
+      - intent-dataset:/data/intent_dataset  # labeled dataset
+      - ../models:/workspace/models          # share model weights
+      - ../scripts:/workspace/scripts:ro     # share scripts
+      - ../src:/workspace/src:ro             # share model definitions
+      - ../config:/workspace/config:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - ROI_WATCH_DIR=/data/roi_incoming
+      - DATASET_DIR=/data/intent_dataset
+      - MODEL_DIR=/workspace/models/cnn_intent
+      - MODE=development
+      - PYTHONPATH=/workspace
+    ports:
+      - "2222:22"
+    networks: [robot-net]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  roi-incoming:
+  intent-dataset:

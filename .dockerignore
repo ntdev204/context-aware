@@ -1,0 +1,59 @@
+# ── Python ────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# ── Virtual environments ───────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Model files (large binaries — mount via volumes, not in image) ─
+models/*.engine
+models/*.pt
+models/*.onnx
+models/**/*.engine
+models/**/*.pt
+models/**/*.onnx
+
+# ── Logs & experience data ─────────────────────────────────────────
+logs/
+*.h5
+*.hdf5
+
+# ── Git ────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── IDE & OS ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Agent / docs (not needed in container) ────────────────────────
+.agent/
+docs/
+
+# ── Generated proto stubs (regenerated at build time) ─────────────
+src/communication/proto/*_pb2*.py
+
+# ── Docker files themselves ────────────────────────────────────────
+Dockerfile*
+docker-compose*.yml
+.dockerignore
