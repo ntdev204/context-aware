@@ -46,7 +46,7 @@ jobs:
           pip install -e ".[dev,cpu]"
 
       - name: Generate Protobuf stubs
-        run: python scripts/generate_proto.py
+        run: python scripts/infra/generate_proto.py
 
       - name: Run tests
         run: pytest tests/ -v --tb=short --cov=src --cov-report=xml
