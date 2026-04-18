@@ -2,24 +2,23 @@
 
 from __future__ import annotations
 
-import math
-from unittest.mock import MagicMock, patch
-
 import numpy as np
-import pytest
 
 from src.perception.intent_cnn import (
-    APPROACHING, CROSSING, ERRATIC, STATIONARY,
-    IntentCNN, IntentPrediction,
+    ERRATIC,
+    STATIONARY,
+    IntentCNN,
 )
-from src.perception.roi_extractor import ROIExtractor, CNN_INPUT_H, CNN_INPUT_W
-from src.perception.tracker import Tracker, _FallbackTracker
+from src.perception.roi_extractor import CNN_INPUT_H, CNN_INPUT_W, ROIExtractor
+from src.perception.tracker import _FallbackTracker
 from src.perception.yolo_detector import (
-    CLASS_NAMES, DetectionResult, FrameDetections, YOLODetector,
+    CLASS_NAMES,
+    DetectionResult,
+    FrameDetections,
 )
-
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
+
 
 def make_detection(x1=100, y1=100, x2=200, y2=300, cls="person", conf=0.9, tid=1):
     return DetectionResult(
@@ -37,20 +36,21 @@ def make_frame(h=720, w=1280):
 
 def make_frame_det(persons=None, obstacles=None, free_space=0.7):
     fd = FrameDetections(free_space_ratio=free_space)
-    fd.persons   = persons   or []
+    fd.persons = persons or []
     fd.obstacles = obstacles or []
-    fd.all_detections = (fd.persons + fd.obstacles)
+    fd.all_detections = fd.persons + fd.obstacles
     return fd
 
 
 # ── ROI Extractor ────────────────────────────────────────────────────────────
+
 
 class TestROIExtractor:
     def test_output_shape(self):
         extractor = ROIExtractor()
         frame = make_frame()
         det = make_detection(100, 100, 200, 400)
-        fd  = make_frame_det(persons=[det])
+        fd = make_frame_det(persons=[det])
         rois = extractor.extract(frame, fd)
         assert len(rois) == 1
         assert rois[0].image.shape == (CNN_INPUT_H, CNN_INPUT_W, 3)
@@ -59,7 +59,7 @@ class TestROIExtractor:
         extractor = ROIExtractor()
         frame = make_frame()
         det = make_detection(100, 100, 105, 105)  # 5×5 bbox — too small
-        fd  = make_frame_det(persons=[det])
+        fd = make_frame_det(persons=[det])
         rois = extractor.extract(frame, fd)
         assert len(rois) == 0
 
@@ -67,7 +67,7 @@ class TestROIExtractor:
         extractor = ROIExtractor()
         frame = make_frame(h=720, w=1280)
         det = make_detection(600, 200, 700, 600)
-        fd  = make_frame_det(persons=[det])
+        fd = make_frame_det(persons=[det])
         rois = extractor.extract(frame, fd)
         cx, cy = rois[0].relative_position
         assert 0.0 <= cx <= 1.0
@@ -85,14 +85,15 @@ class TestROIExtractor:
         """Padding must not exceed frame boundaries."""
         extractor = ROIExtractor(padding_ratio=0.5)
         frame = make_frame(h=480, w=640)
-        det = make_detection(0, 0, 50, 100)   # top-left corner
-        fd  = make_frame_det(persons=[det])
+        det = make_detection(0, 0, 50, 100)  # top-left corner
+        fd = make_frame_det(persons=[det])
         rois = extractor.extract(frame, fd)
         assert len(rois) == 1
         assert rois[0].image.shape == (CNN_INPUT_H, CNN_INPUT_W, 3)
 
 
 # ── Tracker (Fallback) ───────────────────────────────────────────────────────
+
 
 class TestFallbackTracker:
     def test_assigns_track_id(self):
@@ -135,14 +136,16 @@ class TestFallbackTracker:
 
 # ── CNN Intent Model ─────────────────────────────────────────────────────────
 
+
 class TestIntentCNN:
     def test_no_model_returns_uniform(self):
         cnn = IntentCNN(model_path=None)
         cnn._session = None
-        cnn._model   = None
+        cnn._model = None
         cnn._use_pytorch = False
 
         from src.perception.roi_extractor import PersonROI
+
         roi = PersonROI(
             image=np.zeros((256, 128, 3), dtype=np.uint8),
             bbox=(100, 100, 200, 300),
@@ -158,11 +161,12 @@ class TestIntentCNN:
     def test_output_probability_sums_to_one(self):
         cnn = IntentCNN(model_path=None)
         cnn._session = None
-        cnn._model   = None
+        cnn._model = None
         cnn._use_pytorch = False
         from src.perception.roi_extractor import PersonROI
+
         rois = [
-            PersonROI(np.zeros((256, 128, 3), dtype=np.uint8), (0,0,100,200), i, (0.5,0.5), 1.0)
+            PersonROI(np.zeros((256, 128, 3), dtype=np.uint8), (0, 0, 100, 200), i, (0.5, 0.5), 1.0)
             for i in range(5)
         ]
         preds = cnn.predict_batch(rois)
@@ -172,10 +176,11 @@ class TestIntentCNN:
     def test_direction_in_range(self):
         cnn = IntentCNN(model_path=None)
         cnn._session = None
-        cnn._model   = None
+        cnn._model = None
         cnn._use_pytorch = False
         from src.perception.roi_extractor import PersonROI
-        roi = PersonROI(np.zeros((256, 128, 3), np.uint8), (0,0,128,256), 1, (0.5,0.5), 0.5)
+
+        roi = PersonROI(np.zeros((256, 128, 3), np.uint8), (0, 0, 128, 256), 1, (0.5, 0.5), 0.5)
         preds = cnn.predict_batch([roi])
         assert -1.0 <= preds[0].dx <= 1.0
         assert -1.0 <= preds[0].dy <= 1.0
@@ -186,6 +191,7 @@ class TestIntentCNN:
 
     def test_intent_names_valid(self):
         from src.perception.intent_cnn import INTENT_NAMES
+
         assert len(INTENT_NAMES) == 6
         assert INTENT_NAMES[ERRATIC] == "ERRATIC"
         assert INTENT_NAMES[STATIONARY] == "STATIONARY"

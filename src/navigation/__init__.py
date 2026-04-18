@@ -2,7 +2,7 @@
 
 from .context_builder import ContextBuilder, RobotState
 from .heuristic_policy import HeuristicPolicy
-from .nav_command import NavigationCommand, NavigationMode, MODE_NAMES
+from .nav_command import MODE_NAMES, NavigationCommand, NavigationMode
 from .safety_monitor import SafetyMonitor
 
 __all__ = [

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import List, Tuple
 
 import cv2
 import numpy as np
@@ -19,10 +18,10 @@ CNN_INPUT_H = 256
 
 @dataclass
 class PersonROI:
-    image: np.ndarray                       # shape (CNN_INPUT_H, CNN_INPUT_W, 3), BGR
-    bbox: Tuple[int, int, int, int]         # original bbox in full frame
+    image: np.ndarray  # shape (CNN_INPUT_H, CNN_INPUT_W, 3), BGR
+    bbox: tuple[int, int, int, int]  # original bbox in full frame
     track_id: int
-    relative_position: Tuple[float, float]  # (cx_norm, cy_norm) in [0-1]
+    relative_position: tuple[float, float]  # (cx_norm, cy_norm) in [0-1]
     distance_estimate: float = 0.0  # deprecated: use DetectionResult.distance
 
 
@@ -39,10 +38,10 @@ class ROIExtractor:
         self.output_height = output_height
         self.padding_ratio = padding_ratio
 
-    def extract(self, frame: np.ndarray, frame_det: FrameDetections) -> List[PersonROI]:
+    def extract(self, frame: np.ndarray, frame_det: FrameDetections) -> list[PersonROI]:
         """Return a PersonROI for every tracked person in *frame_det*."""
         h, w = frame.shape[:2]
-        rois: List[PersonROI] = []
+        rois: list[PersonROI] = []
 
         for person in frame_det.persons:
             roi = self._crop_person(frame, person, h, w)
@@ -76,8 +75,9 @@ class ROIExtractor:
         if crop.size == 0:
             return None
 
-        resized = cv2.resize(crop, (self.output_width, self.output_height),
-                             interpolation=cv2.INTER_LINEAR)
+        resized = cv2.resize(
+            crop, (self.output_width, self.output_height), interpolation=cv2.INTER_LINEAR
+        )
 
         # Normalised centre position relative to frame
         cx_norm = ((x1 + x2) / 2.0) / frame_w

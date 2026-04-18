@@ -23,9 +23,9 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Any, Dict, Generator
+from collections.abc import Generator
+from typing import Any
 
-import cv2
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,12 +35,14 @@ from .state import VALID_MODE_OVERRIDES, ServerState
 
 log = logging.getLogger(__name__)
 
-UPDATABLE_CONFIG_KEYS = frozenset({
-    "fps_target",
-    "yolo_confidence_threshold",
-    "watchdog_timeout_ms",
-    "watchdog_log_interval_s",
-})
+UPDATABLE_CONFIG_KEYS = frozenset(
+    {
+        "fps_target",
+        "yolo_confidence_threshold",
+        "watchdog_timeout_ms",
+        "watchdog_log_interval_s",
+    }
+)
 
 
 def create_app(state: ServerState) -> FastAPI:
@@ -62,7 +64,7 @@ def create_app(state: ServerState) -> FastAPI:
     # ------------------------------------------------------------------
 
     @app.get("/health", tags=["monitoring"])
-    def health() -> Dict[str, Any]:
+    def health() -> dict[str, Any]:
         m = state.get_metrics()
         return {
             "status": "ok" if state.is_running() else "stopped",
@@ -73,7 +75,7 @@ def create_app(state: ServerState) -> FastAPI:
         }
 
     @app.get("/metrics", tags=["monitoring"])
-    def metrics() -> Dict[str, Any]:
+    def metrics() -> dict[str, Any]:
         m = state.get_metrics()
         return {
             "fps": round(m.fps, 2),
@@ -112,15 +114,17 @@ def create_app(state: ServerState) -> FastAPI:
         try:
             while state.is_running():
                 m = state.get_metrics()
-                await websocket.send_json({
-                    "fps": round(m.fps, 2),
-                    "inference_ms": round(m.inference_ms, 2),
-                    "persons": m.persons,
-                    "obstacles": m.obstacles,
-                    "mode": m.mode,
-                    "mode_override": state.get_mode_override(),
-                    "uptime_s": round(state.uptime_seconds, 1),
-                })
+                await websocket.send_json(
+                    {
+                        "fps": round(m.fps, 2),
+                        "inference_ms": round(m.inference_ms, 2),
+                        "persons": m.persons,
+                        "obstacles": m.obstacles,
+                        "mode": m.mode,
+                        "mode_override": state.get_mode_override(),
+                        "uptime_s": round(state.uptime_seconds, 1),
+                    }
+                )
                 await asyncio.sleep(1.0)
         except (WebSocketDisconnect, RuntimeError):
             pass
@@ -145,7 +149,7 @@ def create_app(state: ServerState) -> FastAPI:
     # ------------------------------------------------------------------
 
     @app.post("/control/stop", tags=["control"])
-    def control_stop() -> Dict[str, Any]:
+    def control_stop() -> dict[str, Any]:
         state.set_mode_override("STOP")
         log.info("API: mode override set to STOP")
         return {"status": "ok", "mode_override": "STOP"}
@@ -163,7 +167,7 @@ def create_app(state: ServerState) -> FastAPI:
         return JSONResponse({"status": "ok", "mode_override": mode})
 
     @app.delete("/control/mode", tags=["control"])
-    def clear_mode_override() -> Dict[str, Any]:
+    def clear_mode_override() -> dict[str, Any]:
         state.set_mode_override(None)
         log.info("API: mode override cleared -- policy restored")
         return {"status": "ok", "mode_override": None}
@@ -173,11 +177,11 @@ def create_app(state: ServerState) -> FastAPI:
     # ------------------------------------------------------------------
 
     @app.get("/config", tags=["config"])
-    def get_config() -> Dict[str, Any]:
+    def get_config() -> dict[str, Any]:
         return state.get_runtime_config()
 
     @app.patch("/config", tags=["config"])
-    def patch_config(updates: Dict[str, Any]) -> JSONResponse:
+    def patch_config(updates: dict[str, Any]) -> JSONResponse:
         unknown = set(updates.keys()) - UPDATABLE_CONFIG_KEYS
         if unknown:
             return JSONResponse(

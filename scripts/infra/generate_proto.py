@@ -16,19 +16,18 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+import importlib.util
 
-try:
-    import pkg_resources
-except ImportError:
+if importlib.util.find_spec("pkg_resources") is None:
     print("ERROR: 'pkg_resources' module is missing.")
     print("   This is required by grpcio-tools to generate protos.")
     print("   Please run: pip install setuptools")
     sys.exit(1)
 
-ROOT       = Path(__file__).parent.parent
-PROTO_DIR  = ROOT / "proto"
-OUT_DIR    = ROOT / "src" / "communication" / "proto"
-PROTOS     = ["messages.proto", "training_service.proto"]
+ROOT = Path(__file__).parent.parent
+PROTO_DIR = ROOT / "proto"
+OUT_DIR = ROOT / "src" / "communication" / "proto"
+PROTOS = ["messages.proto", "training_service.proto"]
 
 
 def generate() -> None:
@@ -45,7 +44,9 @@ def generate() -> None:
             continue
 
         cmd = [
-            sys.executable, "-m", "grpc_tools.protoc",
+            sys.executable,
+            "-m",
+            "grpc_tools.protoc",
             f"-I{PROTO_DIR}",
             f"--python_out={OUT_DIR}",
             f"--grpc_python_out={OUT_DIR}",
@@ -56,10 +57,10 @@ def generate() -> None:
         if result.returncode != 0:
             print(f"  ERROR:\n{result.stderr}")
         else:
-            print(f"  Done")
+            print("  Done")
 
     print(f"\nStubs written to: {OUT_DIR}")
-    print("Next: verify with  python -c \"from src.communication.proto import messages_pb2\"")
+    print('Next: verify with  python -c "from src.communication.proto import messages_pb2"')
 
 
 if __name__ == "__main__":

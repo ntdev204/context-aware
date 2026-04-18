@@ -36,7 +36,7 @@ class Config:
         return val
 
     # Convenience sub-section
-    def section(self, key: str) -> "Config":
+    def section(self, key: str) -> Config:
         val = self.get(key, {})
         return Config(val if isinstance(val, dict) else {})
 
@@ -70,4 +70,5 @@ def load_config(path: str | Path | None = None) -> Config:
 def setup_logging(cfg: Config) -> None:
     """Configure structured logging. Delegates to src.logging_config."""
     from .logging_config import setup_logging as _setup
+
     _setup(cfg)

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import subprocess
-import sys
 import time
 
 
@@ -36,8 +35,8 @@ def get_memory_gb() -> tuple[float, float]:
                 k, v = line.split(":")
                 info[k.strip()] = int(v.strip().split()[0])
         total_gb = info["MemTotal"] / 1024 / 1024
-        free_gb  = (info["MemFree"] + info["Buffers"] + info["Cached"]) / 1024 / 1024
-        used_gb  = total_gb - free_gb
+        free_gb = (info["MemFree"] + info["Buffers"] + info["Cached"]) / 1024 / 1024
+        used_gb = total_gb - free_gb
         return used_gb, total_gb
     except Exception:
         return 0.0, 0.0
@@ -53,12 +52,12 @@ def get_temp() -> str:
 
 def report() -> None:
     used, total = get_memory_gb()
-    gpu   = get_gpu_usage()
-    temp  = get_temp()
-    ts    = time.strftime("%H:%M:%S")
+    gpu = get_gpu_usage()
+    temp = get_temp()
+    ts = time.strftime("%H:%M:%S")
 
     print(f"\n[{ts}] === Jetson Health ===")
-    print(f"  RAM : {used:.2f} GB / {total:.2f} GB  ({used/total*100:.1f}%)")
+    print(f"  RAM : {used:.2f} GB / {total:.2f} GB  ({used / total * 100:.1f}%)")
     print(f"  GPU : {gpu}")
     print(f"  Temp: {temp}")
     print(f"  RAM budget: {'OK' if used < 3.5 else 'WARNING: > 3.5GB target'}")

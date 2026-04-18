@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 @dataclass
@@ -34,12 +34,12 @@ class ServerState:
     def __init__(self) -> None:
         self._lock = Lock()
         self._metrics = InferenceMetrics()
-        self._mode_override: Optional[str] = None
-        self._runtime_config: Dict[str, Any] = {}
+        self._mode_override: str | None = None
+        self._runtime_config: dict[str, Any] = {}
         self._mjpeg_frame: bytes = b""
         self._running = True
         self._start_time = time.monotonic()
-        self._latest_detections: Dict[str, Any] = {}
+        self._latest_detections: dict[str, Any] = {}
 
     @property
     def uptime_seconds(self) -> float:
@@ -67,21 +67,21 @@ class ServerState:
                 updated_at=m.updated_at,
             )
 
-    def update_detections(self, payload: Dict[str, Any]) -> None:
+    def update_detections(self, payload: dict[str, Any]) -> None:
         with self._lock:
             self._latest_detections = payload
 
-    def get_detections(self) -> Dict[str, Any]:
+    def get_detections(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._latest_detections)
 
-    def set_mode_override(self, mode: Optional[str]) -> None:
+    def set_mode_override(self, mode: str | None) -> None:
         if mode is not None and mode not in VALID_MODE_OVERRIDES:
             raise ValueError(f"Invalid mode '{mode}'. Valid: {VALID_MODE_OVERRIDES}")
         with self._lock:
             self._mode_override = mode
 
-    def get_mode_override(self) -> Optional[str]:
+    def get_mode_override(self) -> str | None:
         with self._lock:
             return self._mode_override
 
@@ -93,11 +93,11 @@ class ServerState:
         with self._lock:
             return self._mjpeg_frame
 
-    def update_runtime_config(self, updates: Dict[str, Any]) -> None:
+    def update_runtime_config(self, updates: dict[str, Any]) -> None:
         with self._lock:
             self._runtime_config.update(updates)
 
-    def get_runtime_config(self) -> Dict[str, Any]:
+    def get_runtime_config(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._runtime_config)
 

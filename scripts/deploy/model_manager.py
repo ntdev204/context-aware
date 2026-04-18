@@ -73,8 +73,13 @@ def cmd_register(args: argparse.Namespace) -> None:
     with open(model_dir / "metadata.json", "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
 
-    log.info("Registered %s v%s -> %s (md5: %s)", args.type, args.version,
-             dest.relative_to(ROOT), metadata["md5_hash"])
+    log.info(
+        "Registered %s v%s -> %s (md5: %s)",
+        args.type,
+        args.version,
+        dest.relative_to(ROOT),
+        metadata["md5_hash"],
+    )
 
 
 def cmd_promote(args: argparse.Namespace) -> None:

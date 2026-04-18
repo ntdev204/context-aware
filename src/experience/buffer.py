@@ -17,7 +17,6 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +31,17 @@ class ExperienceBuffer:
         write_format: str = "hdf5",
         async_write: bool = True,
     ) -> None:
-        self.max_size     = max_size
-        self.write_dir    = Path(write_dir)
+        self.max_size = max_size
+        self.write_dir = Path(write_dir)
         self.write_format = write_format
-        self.async_write  = async_write
+        self.async_write = async_write
 
         self._buf: deque = deque(maxlen=max_size)
         self._lock = threading.Lock()
 
-        self._write_thread: Optional[threading.Thread] = None
+        self._write_thread: threading.Thread | None = None
         self._running = False
-        self._pending: deque = deque()     # staging queue for writer thread
+        self._pending: deque = deque()  # staging queue for writer thread
         self._write_lock = threading.Lock()
 
         self._written_count = 0
@@ -135,29 +134,33 @@ class ExperienceBuffer:
         for frame in batch:
             rs = frame.robot_state
             intent_classes = [p.intent_class for p in frame.intent_predictions]
-            intent_confs   = [p.confidence   for p in frame.intent_predictions]
-            persons        = frame.detections.persons
-            person_distances = [p.distance        for p in persons]
+            intent_confs = [p.confidence for p in frame.intent_predictions]
+            persons = frame.detections.persons
+            person_distances = [p.distance for p in persons]
             distance_sources = [p.distance_source for p in persons]
 
-            records.append({
-                "grp_name":        f"frame_{frame.frame_id:08d}",
-                "frame_id":        int(frame.frame_id),
-                "timestamp":       float(frame.timestamp),
-                "wall_time":       float(frame.wall_time),
-                "session_id":      frame.session_id.encode("utf-8") if frame.session_id else b"default",
-                "image_jpeg":      np.frombuffer(bytes(frame.raw_image_jpeg), dtype=np.uint8),
-                "observation":     np.asarray(frame.observation),
-                "action":          np.asarray(frame.action),
-                "vx":              float(rs.vx),
-                "vy":              float(rs.vy),
-                "vtheta":          float(rs.vtheta),
-                "battery":         float(rs.battery_percent),
-                "intent_classes":  np.array(intent_classes or [0],   dtype=np.int32),
-                "intent_confs":    np.array(intent_confs   or [0.0], dtype=np.float32),
-                "person_distances":np.array(person_distances or [0.0], dtype=np.float32),
-                "distance_sources":[s.encode("utf-8") for s in distance_sources] or [b"bbox"],
-            })
+            records.append(
+                {
+                    "grp_name": f"frame_{frame.frame_id:08d}",
+                    "frame_id": int(frame.frame_id),
+                    "timestamp": float(frame.timestamp),
+                    "wall_time": float(frame.wall_time),
+                    "session_id": frame.session_id.encode("utf-8")
+                    if frame.session_id
+                    else b"default",
+                    "image_jpeg": np.frombuffer(bytes(frame.raw_image_jpeg), dtype=np.uint8),
+                    "observation": np.asarray(frame.observation),
+                    "action": np.asarray(frame.action),
+                    "vx": float(rs.vx),
+                    "vy": float(rs.vy),
+                    "vtheta": float(rs.vtheta),
+                    "battery": float(rs.battery_percent),
+                    "intent_classes": np.array(intent_classes or [0], dtype=np.int32),
+                    "intent_confs": np.array(intent_confs or [0.0], dtype=np.float32),
+                    "person_distances": np.array(person_distances or [0.0], dtype=np.float32),
+                    "distance_sources": [s.encode("utf-8") for s in distance_sources] or [b"bbox"],
+                }
+            )
 
         # Disable GC during h5py critical section to prevent segfault with raw C pointers.
         gc_was_enabled = gc.isenabled()
@@ -173,20 +176,20 @@ class ExperienceBuffer:
                         grp_name = f"{grp_name}_{int(rec['timestamp'] * 1000)}"
                     grp = f.create_group(grp_name)
 
-                    grp.attrs["frame_id"]  = rec["frame_id"]
+                    grp.attrs["frame_id"] = rec["frame_id"]
                     grp.attrs["timestamp"] = rec["timestamp"]
-                    grp.attrs["wall_time"]  = rec["wall_time"]
+                    grp.attrs["wall_time"] = rec["wall_time"]
                     grp.attrs["session_id"] = rec["session_id"]
-                    grp.attrs["vx"]         = rec["vx"]
-                    grp.attrs["vy"]         = rec["vy"]
-                    grp.attrs["vtheta"]     = rec["vtheta"]
-                    grp.attrs["battery"]    = rec["battery"]
+                    grp.attrs["vx"] = rec["vx"]
+                    grp.attrs["vy"] = rec["vy"]
+                    grp.attrs["vtheta"] = rec["vtheta"]
+                    grp.attrs["battery"] = rec["battery"]
 
-                    grp.create_dataset("image_jpeg",       data=rec["image_jpeg"],       dtype="u1")
-                    grp.create_dataset("observation",      data=rec["observation"])
-                    grp.create_dataset("action",           data=rec["action"])
-                    grp.create_dataset("intent_classes",   data=rec["intent_classes"])
-                    grp.create_dataset("intent_confs",     data=rec["intent_confs"])
+                    grp.create_dataset("image_jpeg", data=rec["image_jpeg"], dtype="u1")
+                    grp.create_dataset("observation", data=rec["observation"])
+                    grp.create_dataset("action", data=rec["action"])
+                    grp.create_dataset("intent_classes", data=rec["intent_classes"])
+                    grp.create_dataset("intent_confs", data=rec["intent_confs"])
                     grp.create_dataset("person_distances", data=rec["person_distances"])
                     grp.create_dataset(
                         "distance_sources",
@@ -200,20 +203,21 @@ class ExperienceBuffer:
     def _write_directory(self, batch: list) -> None:
         """Fallback: write each frame as separate JPEG + JSON."""
         import json
+
         for frame in batch:
             fid = frame.frame_id
-            img_path  = self.write_dir / f"{fid:08d}.jpg"
+            img_path = self.write_dir / f"{fid:08d}.jpg"
             meta_path = self.write_dir / f"{fid:08d}.json"
 
             img_path.write_bytes(frame.raw_image_jpeg)
 
             meta = {
-                "frame_id":    frame.frame_id,
-                "timestamp":   frame.timestamp,
-                "wall_time":   frame.wall_time,
-                "session_id":  frame.session_id,
+                "frame_id": frame.frame_id,
+                "timestamp": frame.timestamp,
+                "wall_time": frame.wall_time,
+                "session_id": frame.session_id,
                 "observation": frame.observation.tolist(),
-                "action":      frame.action.tolist(),
+                "action": frame.action.tolist(),
                 "robot_state": {
                     "vx": frame.robot_state.vx,
                     "vy": frame.robot_state.vy,

@@ -7,7 +7,6 @@ Fallback: minimal IoU tracker with min_hits warm-up to suppress ghost tracks.
 from __future__ import annotations
 
 import logging
-from typing import List
 
 import numpy as np
 
@@ -18,13 +17,13 @@ logger = logging.getLogger(__name__)
 # Prefer supervision.ByteTrack — works with any ultralytics version.
 try:
     import supervision as sv
+
     _HAS_SUPERVISION = True
     logger.info("ByteTrack backend: supervision.ByteTrack")
 except ImportError:  # pragma: no cover
     _HAS_SUPERVISION = False
     logger.warning(
-        "supervision not installed — using fallback IoU tracker. "
-        "Run: pip install supervision"
+        "supervision not installed — using fallback IoU tracker. Run: pip install supervision"
     )
 
 
@@ -49,16 +48,14 @@ class _FallbackTracker:
         self._tracks: dict[int, dict] = {}
         self._next_id = 1
 
-    def update(self, detections: List[DetectionResult]) -> List[DetectionResult]:
+    def update(self, detections: list[DetectionResult]) -> list[DetectionResult]:
         if not detections:
             self._age_tracks()
             return []
 
         if not self._tracks:
             for det in detections:
-                self._tracks[self._next_id] = {
-                    "bbox": det.bbox, "age": 0, "hits": 1
-                }
+                self._tracks[self._next_id] = {"bbox": det.bbox, "age": 0, "hits": 1}
                 self._next_id += 1
             # None of the new tracks have enough hits yet
             self._age_tracks()
@@ -80,9 +77,7 @@ class _FallbackTracker:
                 if self._tracks[best_id]["hits"] >= self.min_hits:
                     det.track_id = best_id
             else:
-                self._tracks[self._next_id] = {
-                    "bbox": det.bbox, "age": 0, "hits": 1
-                }
+                self._tracks[self._next_id] = {"bbox": det.bbox, "age": 0, "hits": 1}
                 self._next_id += 1
                 # track_id stays -1 (unconfirmed)
 
@@ -157,9 +152,7 @@ class Tracker:
 
         return frame_det
 
-    def _update_supervision(
-        self, persons: List[DetectionResult]
-    ) -> List[DetectionResult]:
+    def _update_supervision(self, persons: list[DetectionResult]) -> list[DetectionResult]:
         """Use supervision.ByteTrack — accepts sv.Detections natively."""
         xyxy = np.array([list(d.bbox) for d in persons], dtype=np.float32)
         confs = np.array([d.confidence for d in persons], dtype=np.float32)
