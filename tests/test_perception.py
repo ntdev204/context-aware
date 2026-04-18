@@ -97,13 +97,13 @@ class TestROIExtractor:
 
 class TestFallbackTracker:
     def test_assigns_track_id(self):
-        tracker = _FallbackTracker()
+        tracker = _FallbackTracker(min_hits=1)
         dets = [make_detection(100, 100, 200, 300, tid=-1)]
         result = tracker.update(dets)
         assert result[0].track_id > 0
 
     def test_consistent_id_over_frames(self):
-        tracker = _FallbackTracker()
+        tracker = _FallbackTracker(min_hits=1)
         det = make_detection(100, 100, 200, 300, tid=-1)
         [result] = tracker.update([det])
         tid1 = result.track_id
@@ -114,7 +114,7 @@ class TestFallbackTracker:
         assert result2.track_id == tid1
 
     def test_new_track_for_far_bbox(self):
-        tracker = _FallbackTracker()
+        tracker = _FallbackTracker(min_hits=1)
         det1 = make_detection(100, 100, 200, 300, tid=-1)
         [r1] = tracker.update([det1])
         tid1 = r1.track_id
@@ -130,7 +130,7 @@ class TestFallbackTracker:
         assert abs(iou - expected) < 1e-4
 
     def test_empty_detections(self):
-        tracker = _FallbackTracker()
+        tracker = _FallbackTracker(min_hits=1)
         assert tracker.update([]) == []
 
 
