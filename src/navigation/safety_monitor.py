@@ -59,7 +59,6 @@ class SafetyMonitor:
     ) -> NavigationCommand:
         """Apply Layer 2 safety rules.  Returns (possibly modified) cmd."""
 
-
         elapsed_ms = (time.monotonic() - self._last_robot_state_ts) * 1000
         if elapsed_ms > self.watchdog_timeout_ms and cmd.mode != NavigationMode.STOP:
             self._log_watchdog(elapsed_ms)

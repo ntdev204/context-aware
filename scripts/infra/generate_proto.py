@@ -13,10 +13,10 @@ Output:
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
-import importlib.util
 
 if importlib.util.find_spec("pkg_resources") is None:
     print("ERROR: 'pkg_resources' module is missing.")
