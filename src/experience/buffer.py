@@ -138,6 +138,9 @@ class ExperienceBuffer:
             persons = frame.detections.persons
             person_distances = [p.distance for p in persons]
             distance_sources = [p.distance_source for p in persons]
+            person_cxs = [(p.bbox[0] + p.bbox[2]) / 2.0 for p in persons]
+            person_cys = [(p.bbox[1] + p.bbox[3]) / 2.0 for p in persons]
+            person_tids = [p.track_id for p in persons]
 
             records.append(
                 {
@@ -159,6 +162,9 @@ class ExperienceBuffer:
                     "intent_confs": np.array(intent_confs or [0.0], dtype=np.float32),
                     "person_distances": np.array(person_distances or [0.0], dtype=np.float32),
                     "distance_sources": [s.encode("utf-8") for s in distance_sources] or [b"bbox"],
+                    "person_cxs": np.array(person_cxs or [0.0], dtype=np.float32),
+                    "person_cys": np.array(person_cys or [0.0], dtype=np.float32),
+                    "person_tids": np.array(person_tids or [-1], dtype=np.int32),
                 }
             )
 
@@ -191,6 +197,9 @@ class ExperienceBuffer:
                     grp.create_dataset("intent_classes", data=rec["intent_classes"])
                     grp.create_dataset("intent_confs", data=rec["intent_confs"])
                     grp.create_dataset("person_distances", data=rec["person_distances"])
+                    grp.create_dataset("person_cxs", data=rec["person_cxs"])
+                    grp.create_dataset("person_cys", data=rec["person_cys"])
+                    grp.create_dataset("person_tids", data=rec["person_tids"])
                     grp.create_dataset(
                         "distance_sources",
                         data=rec["distance_sources"],
@@ -228,5 +237,15 @@ class ExperienceBuffer:
                     {"track_id": p.track_id, "class": p.intent_class, "conf": p.confidence}
                     for p in frame.intent_predictions
                 ],
+                "detections": [
+                    {
+                        "track_id": p.track_id,
+                        "cx": (p.bbox[0] + p.bbox[2]) / 2.0,
+                        "cy": (p.bbox[1] + p.bbox[3]) / 2.0,
+                        "dist_mm": int(p.distance * 1000),
+                        "dsrc": p.distance_source,
+                    }
+                    for p in frame.detections.persons
+                ]
             }
             meta_path.write_text(json.dumps(meta, indent=2))
