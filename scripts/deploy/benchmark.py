@@ -53,6 +53,32 @@ def run_benchmark(args) -> None:
     policy = HeuristicPolicy()
     safety = SafetyMonitor()
 
+    # Initialize ExperimentLogger
+    sys.path.insert(
+        0,
+        str(
+            Path(__file__).parent.parent.parent
+            / ".agent"
+            / "skills"
+            / "academic-data-manager"
+            / "scripts"
+        ),
+    )
+    try:
+        from experiment_logger import ExperimentLogger
+
+        exp_logger = ExperimentLogger(
+            experiment_name="pipeline_latency",
+            config={
+                "model": "yolo11s + intent_cnn",
+                "frames": args.frames,
+                "jetson_mode": "FP16" if per_cfg.get("yolo.use_tensorrt", False) else "FP32",
+            },
+        )
+    except ImportError:
+        exp_logger = None
+        print("ExperimentLogger not found, results will not be saved to research_data/")
+
     latencies = []
 
     print(f"Benchmarking {args.frames} frames...")
@@ -71,16 +97,25 @@ def run_benchmark(args) -> None:
         elapsed_ms = (time.perf_counter() - t0) * 1000
         latencies.append(elapsed_ms)
 
+        if exp_logger:
+            exp_logger.log_epoch(epoch=i, metrics={"latency_ms": elapsed_ms})
+
     latencies_arr = np.array(latencies)
+    mean_lat = latencies_arr.mean()
+    fps = 1000 / mean_lat if mean_lat > 0 else 0
+
+    if exp_logger:
+        exp_logger.finalize(summary_notes=f"Mean latency: {mean_lat:.1f}ms, FPS: {fps:.1f}")
+
     print("\n=== Benchmark Results ===")
     print(f"Frames       : {args.frames}")
-    print(f"Mean latency : {latencies_arr.mean():.1f} ms")
+    print(f"Mean latency : {mean_lat:.1f} ms")
     print(f"P50 latency  : {np.percentile(latencies_arr, 50):.1f} ms")
     print(f"P95 latency  : {np.percentile(latencies_arr, 95):.1f} ms")
     print(f"P99 latency  : {np.percentile(latencies_arr, 99):.1f} ms")
     print(f"Max latency  : {latencies_arr.max():.1f} ms")
-    print(f"Mean FPS     : {1000 / latencies_arr.mean():.1f}")
-    print(f"Target: < 33.3ms (30 FPS) -- {'PASS' if latencies_arr.mean() < 33.3 else 'FAIL'}")
+    print(f"Mean FPS     : {fps:.1f}")
+    print(f"Target: < 33.3ms (30 FPS) -- {'PASS' if mean_lat < 33.3 else 'FAIL'}")
 
 
 if __name__ == "__main__":
