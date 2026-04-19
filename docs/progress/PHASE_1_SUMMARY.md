@@ -32,9 +32,12 @@
 - Implement logic trích xuất riêng biệt ảnh viền (crop box) cực kỳ nhỏ gọn bằng 128x256 của đối tượng.
 - Lưu kèm ID thành định dạng file `roi_<track_id>_...jpg` để tiện quá trình gỡ lỗi theo chuỗi khung hình.
 
-### 2. Auto-labeling & Metadata Sync
-- Sinh thêm thư viện metadata phụ trợ `metadata.jsonl` đính vào ngay cạnh mỗi bức ảnh. 
-- Chuẩn bị nền móng bắt sự tương quan giữa độ lệch tâm (Delta cx_cy) so với độ thay đổi chiều sâu Delta Depth để chuẩn bị tạo kịch bản Auto-label (Gán nhãn tự động chuẩn xác hơn dùng Bbox ảo).
+### 2. Auto-labeling, Quality Gate & Metadata Sync (Nâng cấp Ego-Motion)
+- Phân tách dứt điểm logic dán nhãn bằng `autolabel.py` qua thuật toán cửa sổ trượt (Sliding Window N=5).
+- **Robot Ego-Motion Compensation:** Áp dụng thuật toán bù trừ tịnh tiến và góc xoay (`vx`, `vy`, `vtheta`) từ robot trước khi lấy hiệu số `delta_depth`. Tránh false-positive nhãn `APPROACHING` do góc nhìn tương đối.
+- Cập nhật luồng Core `ExperienceBuffer`: Gắn thêm tọa độ ngang viền đối tượng `cx, cy` và định danh chuỗi `track_id` vào dữ liệu HDF5 và JSON dự phòng, phục vụ đắc lực cho việc đoán ý định bằng Lateral Displacement. Giúp phân biệt hai nhãn khó là `CROSSING` và `FOLLOWING`.
+- Tách nhãn `ERRATIC` phân bổ bằng phương sai (`variance`) thay vì Auto-label ngầm định nhằm kiểm soát Review.
+- **Quality Gate:** Đưa logic kiểm tra ngưỡng cân bằng vào script `explore_roi.py`. Bật cảnh báo đa dạng dữ liệu `< 35%` nếu nhóm 3 class khó tổng cộng quá ít, bảo đảm an toàn dữ liệu Huấn luyện CNN.
 
 ### 3. Data Auto Sync (Daemon & Cap)
 - Tạo một sidecar container độc lập chạy nền liên tục. Dùng thuật toán rsync qua phương thức bảo mật SSH để đẩy gọn gàng từng Batch file ROI ảnh lẫn file hưu trí HDF5 về Training Server mà không phụ thuộc lệnh chạy thủ công.
@@ -49,7 +52,14 @@
 - **Hướng dẫn thực hiện chi tiết:** 
   - Mở thư mục chứa file sync từ Jetson (hoặc chạy thử trên tập HDF5 dummy).
   - Viết 1 script nhỏ `scripts/verify_hdf5.py`.
-  - Quét qua file `session_*.h5` để in ra và kiểm tra: `image_jpeg` giải mã được không? Timestamp array có lệch không? Mảng `observation` có dính NaN/Zero toàn bộ hay không.
+  - Quét qua file `session_*.h5` để in ra và kiểm tra: `image_jpeg` giải mã được không? Timestamp array có lệch không? Mảng `observation` có dính NaN/Zero toàn bộ hay không. Mảng `person_cxs` có ghi đầy đủ không?
+
+### 2. Manual Review Dữ liệu HDF5 (Các nhãn ERRATIC)
+- **Mục tiêu:** Kiểm tra chéo bằng mắt người xem thuật toán `autolabel.py` gắn cờ `ERRATIC` do phương sai cao đã chính xác chưa.
+- **Hướng dẫn thực hiện chi tiết:** 
+  - Mở Label Studio hoặc tool explore tương đương.
+  - Tải lên thư mục thuộc nhánh Class `ERRATIC`.
+  - Filter xem video sequence để loại bỏ False Positive do noise (nhiễu điểm ảnh) từ camera Depth.
 
 ### 2. Triển khai Temporal State Stacking (Chuẩn bị Phase 2.0)
 - **Mục tiêu:** Chuyển bộ State Observation từ góc nhìn "Điểm" (Snapshot) sang "Chuỗi thời gian" (Temporal) để phục vụ AI đoán ý định.

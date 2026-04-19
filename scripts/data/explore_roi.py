@@ -180,6 +180,12 @@ class DatasetExplorer:
         if counts and max(counts) > min(counts) * 10:
             report["imbalance_warning"] = True
 
+        total_imgs = len(self.images)
+        cfe_count = class_counts.get("CROSSING", 0) + class_counts.get("FOLLOWING", 0) + class_counts.get("ERRATIC", 0)
+        cfe_ratio = cfe_count / total_imgs if total_imgs > 0 else 0
+        if cfe_ratio < 0.35:
+            report["diversity_warning"] = f"Low diversity: CROSSING + FOLLOWING + ERRATIC combined is {cfe_ratio*100:.1f}%, expected > 35%"
+            
         json_path = self.reports_dir / f"exploration_{report['timestamp']}.json"
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2)
@@ -230,6 +236,7 @@ class DatasetExplorer:
         html += f"""
                 </table>
                 {'<p class="warn">Warning: High class imbalance detected (>10:1 ratio)</p>' if report.get("imbalance_warning") else ""}
+                {f'<p class="warn">Warning: {report["diversity_warning"]}</p>' if "diversity_warning" in report else ""}
             </div>
 
             <div class="card">
