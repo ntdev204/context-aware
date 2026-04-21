@@ -77,7 +77,7 @@ jetson-download-models:
 
 jetson-export: jetson-download-models
 	$(JETSON_DEV) run --rm jetson-dev \
-		python scripts/deploy/export_engine.py models/yolo/yolo11s.pt --fp16 --workspace 2 --imgsz 480 640
+		python scripts/deploy/export_engine.py models/yolo/yolo11s.pt --fp16 --workspace 1 --imgsz 480 640
 	@echo "TensorRT engine ready: models/yolo/yolo11s.engine"
 
 jetson-proto:
