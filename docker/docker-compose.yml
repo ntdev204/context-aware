@@ -118,8 +118,8 @@ services:
     image: context-aware:server
     container_name: context-aware-server
     volumes:
-      - roi-incoming:/data/roi_incoming      # batches từ Jetson
-      - intent-dataset:/data/intent_dataset  # labeled dataset
+      - ../roi_dataset:/data/roi_incoming      # batches từ Jetson
+      - ../intent_dataset:/data/intent_dataset  # labeled dataset
       - ../models:/workspace/models          # share model weights
       - ../scripts:/workspace/scripts:ro     # share scripts
       - ../src:/workspace/src:ro             # share model definitions
