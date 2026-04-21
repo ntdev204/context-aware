@@ -1,0 +1,10 @@
+# Training Configuration for Intent CNN
+# Handled by the Training Server on Laptop
+
+training:
+  auto_train: true # Automatically trigger training when dataset passes validation
+  min_new_images: 1000 # Minimum number of new images required to trigger fine-tuning
+  epochs_per_finetune: 10 # Number of epochs for incremental fine-tuning
+  learning_rate: 1e-4 # Lower learning rate for fine-tuning to avoid catastrophic forgetting
+  ewc_lambda: 5000 # Elastic Weight Consolidation regularization strength
+  replay_buffer_size: 2000 # Number of past images to mix into each new training batch
