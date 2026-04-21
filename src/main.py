@@ -24,7 +24,9 @@ import uuid
 from .api import ServerState, start_api_server
 from .communication import ZMQPublisher, ZMQSubscriber
 from .config import load_config, setup_logging
-from .experience import ExperienceBuffer, ExperienceCollector
+from .experience.buffer import ExperienceBuffer
+from .experience.collector import ExperienceCollector
+from .experience.roi_saver import ROISaver
 from .navigation import (
     ContextBuilder,
     HeuristicPolicy,
@@ -154,6 +156,15 @@ def _build_pipeline(cfg) -> dict:
         else None
     )
 
+    roi_saver = (
+        ROISaver(
+            save_dir=exp_cfg.get("roi_save_dir", "logs/roi_dataset"),
+            jpeg_quality=exp_cfg.get("roi_jpeg_quality", 90),
+        )
+        if not _hdf5_enabled
+        else None
+    )
+
     return dict(
         camera=camera,
         yolo=yolo,
@@ -167,6 +178,7 @@ def _build_pipeline(cfg) -> dict:
         subscriber=subscriber,
         exp_buffer=exp_buffer,
         exp_collector=exp_collector,
+        roi_saver=roi_saver,
         api_host=api_cfg.get("host", "0.0.0.0"),
         api_port=api_cfg.get("port", 8080),
         stream_jpeg_quality=api_cfg.get("stream_jpeg_quality", 70),
@@ -193,6 +205,9 @@ class AIServer:
         # HDF5 writer only started when explicitly enabled.
         if c["exp_buffer"] is not None:
             c["exp_buffer"].start()
+        if c["roi_saver"] is not None:
+            c["roi_saver"].start()
+
         c["camera"].start()
         c["publisher"].start()
         c["subscriber"].start(
@@ -219,6 +234,9 @@ class AIServer:
         c["camera"].stop()
         if c["exp_buffer"] is not None:
             c["exp_buffer"].stop()
+        if c["roi_saver"] is not None:
+            c["roi_saver"].stop()
+
         stats = c["exp_collector"].stats if c["exp_collector"] else {}
         logger.info("AI Server stopped. Stats: %s", stats)
 
@@ -294,6 +312,10 @@ class AIServer:
                     cmd=cmd,
                     robot_state=robot_state,
                 )
+
+            # ROI saver path — active when hdf5_enabled: false
+            elif c["roi_saver"] is not None and len(rois) > 0:
+                c["roi_saver"].push(rois, frame_id)
 
             frame_id += 1
             fps_count += 1
