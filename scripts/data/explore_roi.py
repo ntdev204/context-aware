@@ -185,7 +185,7 @@ class DatasetExplorer:
         cfe_ratio = cfe_count / total_imgs if total_imgs > 0 else 0
         if cfe_ratio < 0.35:
             report["diversity_warning"] = f"Low diversity: CROSSING + FOLLOWING + ERRATIC combined is {cfe_ratio*100:.1f}%, expected > 35%"
-            
+
         json_path = self.reports_dir / f"exploration_{report['timestamp']}.json"
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2)

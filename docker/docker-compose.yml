@@ -106,7 +106,7 @@ services:
           echo "[sync] SYNC_TARGET not set — create env/sync.env to enable auto-sync. Sleeping.";
           sleep infinity;
         fi;
-        python scripts/sync_experience.py
+        python scripts/infra/sync_experience.py
       '
 
   # Server Training (x86_64 + CUDA)
