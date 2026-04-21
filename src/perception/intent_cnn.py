@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 
@@ -64,6 +65,13 @@ class IntentCNN:
         self._dtype = None  # torch.float16 or torch.float32
         self._torch_device = None
 
+        # Thread-safe caching for async inference
+        self._lock = threading.Lock()
+        self._cache = {}  # track_id -> IntentPrediction
+        self._rois_queue = []
+        self._running = False
+        self._thread = None
+
     def load(self) -> None:
         """Load model weights (from .pt file) or build with random heads."""
         import torch
@@ -90,6 +98,11 @@ class IntentCNN:
             self._dtype,
             self.model_path,
         )
+
+        # Khởi chạy daemon thread xử lý ngầm intent
+        self._running = True
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
 
     def _build_model(self) -> None:
         """Build MobileNetV3-Small + intent/direction heads."""
@@ -130,45 +143,86 @@ class IntentCNN:
         logger.info("IntentCNN weights loaded from %s", path)
 
     def predict_batch(self, rois: list) -> list[IntentPrediction]:
-        """Run inference on a list of PersonROI objects.
-
-        Returns one IntentPrediction per ROI (same order as input).
-        """
+        """Submit ROIs for background inference and return cached predictions immediately."""
         if not rois:
             return []
 
-        t0 = time.monotonic()
-        batch = self._preprocess([r.image for r in rois])
+        # Đẩy ROIs mới nhất vào hàng đợi (overwrite cũ)
+        with self._lock:
+            self._rois_queue = rois
 
-        if self._model is not None:
-            intent_probs, directions = self._infer_pytorch(batch)
-        else:
-            # Pipeline smoke-test fallback -- no model loaded
-            n = len(rois)
-            intent_probs = np.ones((n, 6), dtype=np.float32) / 6
-            directions = np.zeros((n, 2), dtype=np.float32)
-
-        elapsed_ms = (time.monotonic() - t0) * 1000
-        per_ms = elapsed_ms / len(rois)
-
-        predictions: list[IntentPrediction] = []
-        for i, roi in enumerate(rois):
-            probs = intent_probs[i]
-            cls = int(np.argmax(probs))
-            predictions.append(
-                IntentPrediction(
-                    track_id=roi.track_id,
-                    intent_class=cls,
-                    intent_name=INTENT_NAMES[cls],
-                    probabilities=probs,
-                    dx=float(directions[i, 0]),
-                    dy=float(directions[i, 1]),
-                    confidence=float(probs[cls]),
-                    inference_ms=per_ms,
-                )
-            )
-
+        # Trả về kết quả từ cache ngay lập tức để không block main thread
+        predictions = []
+        with self._lock:
+            for r in rois:
+                if r.track_id in self._cache:
+                    predictions.append(self._cache[r.track_id])
+                else:
+                    # Default khởi tạo tránh bị văng lỗi ở các module quy trình sau
+                    predictions.append(
+                        IntentPrediction(
+                            track_id=r.track_id,
+                            intent_class=0,
+                            intent_name=INTENT_NAMES[0],
+                            probabilities=np.ones(6) / 6,
+                            dx=0.0,
+                            dy=0.0,
+                            confidence=0.0,
+                            inference_ms=0.0,
+                        )
+                    )
         return predictions
+
+    def _worker(self) -> None:
+        """Background inference loop."""
+        while self._running:
+            rois = None
+            with self._lock:
+                if self._rois_queue:
+                    rois = self._rois_queue
+                    self._rois_queue = []
+
+            if not rois:
+                time.sleep(0.01)
+                continue
+
+            t0 = time.monotonic()
+            batch = self._preprocess([r.image for r in rois])
+
+            if self._model is not None:
+                intent_probs, directions = self._infer_pytorch(batch)
+            else:
+                n = len(rois)
+                intent_probs = np.ones((n, 6), dtype=np.float32) / n
+                directions = np.zeros((n, 2), dtype=np.float32)
+
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            per_ms = elapsed_ms / len(rois)
+
+            # Cập nhật kết quả vào cache
+            with self._lock:
+                for i, roi in enumerate(rois):
+                    # Chỉ cache đối tượng đã có track_id xác định
+                    if roi.track_id == -1:
+                        continue
+                    probs = intent_probs[i]
+                    cls = int(np.argmax(probs))
+                    self._cache[roi.track_id] = IntentPrediction(
+                        track_id=roi.track_id,
+                        intent_class=cls,
+                        intent_name=INTENT_NAMES[cls],
+                        probabilities=probs,
+                        dx=float(directions[i, 0]),
+                        dy=float(directions[i, 1]),
+                        confidence=float(probs[cls]),
+                        inference_ms=per_ms,
+                    )
+
+                # Dọn dẹp cache cho các track_id không còn xuất hiện
+                active_ids = {r.track_id for r in rois}
+                dead_ids = [tid for tid in self._cache.keys() if tid not in active_ids]
+                for tid in dead_ids:
+                    del self._cache[tid]
 
     def _preprocess(self, images: list) -> np.ndarray:
         """BGR numpy (H,W,3) -> normalised float32 (N,3,H,W)."""
