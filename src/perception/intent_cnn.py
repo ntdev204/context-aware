@@ -71,7 +71,6 @@ class IntentCNN:
         self._rois_queue = []
         self._running = False
         self._thread = None
-        self._model_loaded_event = threading.Event()
 
     def load(self) -> None:
         """Load model weights (from .pt file) or build with random heads."""
@@ -86,13 +85,21 @@ class IntentCNN:
         # FP16 on CUDA, FP32 elsewhere
         self._dtype = torch.float16 if self.device == "cuda" else torch.float32
 
-        # Khởi chạy daemon thread xử lý ngầm intent
+        # 1. Load PyTorch model completely on the main thread
+        # This prevents CUDA context race conditions with TensorRT / YOLO
+        if self.model_path and self.model_path.endswith(".pt"):
+            self._load_pytorch(self.model_path)
+        else:
+            logger.warning("IntentCNN: no .pt model -- bypassing inference for max FPS.")
+
+        if self._model is not None:
+            self._model = self._model.to(dtype=self._dtype, device=self._torch_device)
+            self._model.eval()
+
+        # 2. Khởi chạy daemon thread xử lý ngầm intent
         self._running = True
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
-
-        # Block until the background thread finishes loading the model
-        self._model_loaded_event.wait()
 
         logger.info(
             "IntentCNN loaded [device=%s, dtype=%s, path=%s]",
@@ -173,24 +180,6 @@ class IntentCNN:
     def _worker(self) -> None:
         """Background inference loop."""
         import torch
-
-        # 1. Initialize CUDA context explicitly in the background thread
-        if self._torch_device.type == "cuda":
-            device_idx = self._torch_device.index if self._torch_device.index is not None else 0
-            torch.cuda.set_device(device_idx)
-
-        # 2. Load PyTorch model in the same thread it will run
-        if self.model_path and self.model_path.endswith(".pt"):
-            self._load_pytorch(self.model_path)
-        else:
-            logger.warning("IntentCNN: no .pt model -- bypassing inference for max FPS.")
-
-        if self._model is not None:
-            self._model = self._model.to(dtype=self._dtype, device=self._torch_device)
-            self._model.eval()
-
-        # 3. Khai báo hoàn thành loading cho main thread
-        self._model_loaded_event.set()
 
         while self._running:
             rois = None
