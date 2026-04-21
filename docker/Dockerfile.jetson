@@ -66,7 +66,7 @@ RUN pip install --no-cache-dir --no-deps ultralytics==8.3.0
 COPY . .
 
 # Fail the build if proto generation fails -- do not silently skip.
-RUN python scripts/generate_proto.py
+RUN python scripts/infra/generate_proto.py
 
 RUN mkdir -p models/yolo models/cnn_intent models/rl_policy /app/logs/experience /app/config
 
@@ -91,6 +91,6 @@ ENV CUDA_MODULE_LOADING=LAZY \
     MODE=production
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python scripts/health_check.py || exit 1
+    CMD python scripts/infra/health_check.py || exit 1
 
 CMD ["python", "-m", "src.main"]

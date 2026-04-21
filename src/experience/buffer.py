@@ -246,6 +246,6 @@ class ExperienceBuffer:
                         "dsrc": p.distance_source,
                     }
                     for p in frame.detections.persons
-                ]
+                ],
             }
             meta_path.write_text(json.dumps(meta, indent=2))
