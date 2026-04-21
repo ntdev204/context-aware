@@ -7,7 +7,7 @@ system:
   fps_target: 30
 
 logging:
-  dir: /app/logs                # base dir for all log files
+  dir: /app/logs # base dir for all log files
   # Per-component level overrides (defaults to INFO)
   levels:
     perception: INFO
@@ -30,7 +30,16 @@ perception:
     confidence_threshold: 0.5
     iou_threshold: 0.45
     input_size: [480, 640]
-    classes: ["person", "obstacle", "door", "wall", "free_space"]
+    classes:
+      [
+        "person",
+        "obstacle",
+        "static_obstacle",
+        "dynamic_hazard",
+        "door",
+        "wall",
+        "free_space",
+      ]
 
   tracker:
     max_age: 30
@@ -94,9 +103,9 @@ experience:
   async_write: true
 
   # ── ROI Collection mode (active when hdf5_enabled: false) ──────────────
-  roi_save_dir: /app/logs/roi_dataset     # local staging dir on Jetson
-  roi_batch_size: 5000                    # images per archive before sending
-  roi_jpeg_quality: 90                    # higher = better features for CNN
+  roi_save_dir: /app/logs/roi_dataset # local staging dir on Jetson
+  roi_batch_size: 5000 # images per archive before sending
+  roi_jpeg_quality: 90 # higher = better features for CNN
 
   # rsync destination — Server Docker container via Tailscale VPN.
   roi_server_target: "-e 'ssh -p 2222' root@100.93.83.87:/data/roi_incoming/"
