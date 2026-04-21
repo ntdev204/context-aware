@@ -33,7 +33,8 @@ def rsync_to_target(log_dir: Path, target: str, ssh_key: str | None) -> None:
     Uses directory sync with --remove-source-files to automatically
     manage local storage (Jetson deletes after sending to laptop).
     """
-    ssh_cmd = "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10"
+    port = os.getenv("SYNC_SSH_PORT", "22")
+    ssh_cmd = f"ssh -p {port} -o StrictHostKeyChecking=no -o ConnectTimeout=10"
     if ssh_key:
         ssh_cmd += f" -i {ssh_key}"
 
