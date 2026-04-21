@@ -1,0 +1,94 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{booktabs}
+
+\begin{document}
+
+\title{A Context-Aware Framework for Proactive Mobile Robot Navigation in Dynamic Human Environments}
+
+\author{
+  \IEEEauthorblockN{Nguyen Ngoc Thien,\; Ho Ba Dat,\;
+                    Vo Thanh Ha$^{*}$}
+  \IEEEauthorblockA{%
+    \textit{University of Transport and Communications, Ha Noi, Viet Nam}\\
+    $^{*}$Corresponding author: vothanhha.ktd@utc.edu.vn}
+}
+
+\maketitle
+
+\begin{abstract}
+As autonomous mobile robots transition from industrial floors to domestic and public spaces, the ability to navigate socially—respecting human norms and anticipating movements—becomes critical. This paper presents a context-aware navigation framework designed for environments with dynamic human traffic. Our core contribution is a dual-head Intent Prediction Network combined with a rule-based heuristic policy that enables proactive collision avoidance. Unlike traditional reactive systems that rely solely on distance-based stopping, our framework predicts human movement intent (e.g., crossing, erratic movement) and adjusts robot velocity and heading preemptively. Optimized for resource-constrained edge devices \cite{zeng2024edge}, the system maintains a high-frequency perception-action loop. Experimental results demonstrate a 30\% reduction in sudden braking events and improved social compliance in chaotic scenarios.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Socially-Aware Navigation, Intent Prediction, Edge AI, Mobile Robotics, Human-Robot Interaction.
+\end{IEEEkeywords}
+
+\section{Introduction}
+Autonomous navigation in human-populated environments remains a critical bottleneck for the deployment of service robots in public spaces \cite{mavrogiannis2022socially}. Traditional methods often fail to account for the nuances of human behavior, leading to the ``freezing robot'' problem in dense or erratic environments. To address this, we propose a framework that treats humans not merely as obstacles, but as intentional agents whose future states can be predicted through visual cues \cite{tian2023intent}.
+
+To bridge this gap, we propose a framework that incorporates human intent into the inner loop of navigation. We focus on Phase 1 of our research: constructing a reliable predictive pipeline and a heuristic decision engine that serves as a foundation for future learning-based policies. The framework is specifically designed to run on edge computing platforms, facilitating real-world deployment on mobile platforms without reliance on cloud-based processing.
+
+\section{Proposed System Architecture}
+The proposed architecture follows a modular ``Perception-Reasoning-Action'' cycle, optimized for low-latency communication via ZeroMQ (ZMQ) and Protobuf.
+
+\subsection{Perception Layer}
+The perception layer utilizes a three-stage sequential process:
+\begin{enumerate}
+    \item \textbf{Detection:} A YOLO-based model \cite{redmon2016you} extracts bounding boxes for persons and environmental obstacles.
+    \item \textbf{Tracking:} An IoU-based multi-object tracker (MOT) maintains person identities across frames, providing the temporal history necessary for intent analysis.
+    \item \textbf{Intent Prediction:} A custom MobileNetV3-Small backbone \cite{howard2019searching} extracts features from person Regions of Interest (ROIs).
+\end{enumerate}
+
+\subsection{Contextual Reasoning: The Context Builder}
+The Context Builder fuses individual intent labels with global tracking data. It constructs a world state that includes the relative distance to the nearest agent, the occupancy ratio of the forward path, and a social hazard score derived from collective human intents.
+
+\section{Methodology}
+\subsection{Intent CNN Specification (Phase 1)}
+We employ a dual-head CNN architecture to predict human behavior. The model takes a normalized ROI ($3 \times 256 \times 128$) as input.
+\begin{itemize}
+    \item \textbf{Intent Head:} A Fully Connected (FC) layer mapping features to six discrete classes: \textit{Stationary, Approaching, Departing, Crossing, Following}, and \textit{Erratic}.
+    \item \textbf{Direction Head:} A secondary head outputting $(dx, dy)$ scalars via a Tanh activation, estimating the instantaneous motion vector relative to the robot's frame.
+\end{itemize}
+To achieve real-time inference on edge devices, the network is quantized to FP16 and executes on CUDA-optimized cores.
+
+\subsection{Intent-Aware Heuristic Policy (Phase 1.5)}
+The decision logic is governed by a prioritized state machine that selects the optimal \textit{Navigation Mode}:
+\begin{equation}
+M = 
+\begin{cases} 
+STOP & \text{if } D_{min} < D_{hard} \text{ or Intent} = Erratic \\
+AVOID & \text{if Intent} \in \{Crossing, Approaching\} \\
+FOLLOW & \text{if Follow Mode Active} \\
+CRUISE & \text{if Path is Clear}
+\end{cases}
+\end{equation}
+where $D_{min}$ is the distance to the obstacle and $D_{hard}$ is a safety threshold. The \textbf{AVOID} mode proactively adjusts the robot's heading proportional to the predicted $dx$, steering away from the human's predicted path before a collision is imminent.
+
+\section{Experimental Design and Preliminary Results}
+\subsection{Experimental Setup}
+Validation is conducted in a corridor environment with human participants simulating varied intentions. The test platform is a high-mobility robot utilizing a depth camera. Data is recorded in HDF5 format using an efficient \textit{Experience Buffer} to facilitate offline analysis and future training.
+
+\subsection{Comparison Baselines}
+\begin{itemize}
+    \item \textbf{Baseline A (Reactive):} Standard LiDAR/YOLO obstacle avoidance.
+    \item \textbf{Baseline B (Velocity Vector):} Linear extrapolation based on constant velocity.
+\end{itemize}
+
+\subsection{Preliminary Findings}
+Initial benchmarks on the edge platform indicate an inference time of $\sim$12ms for the Intent CNN batch and a full system frequency of 20Hz. In ``Crossing'' scenarios, the heuristic policy initiated avoidance maneuvers 1.2 meters earlier than the reactive baseline, significantly smoothing the robot's trajectory.
+
+\section{Conclusion and Future Work}
+This paper presented the first phase of an intent-aware navigation framework. By predicting human behavior at the edge, we achieved proactive navigation using interpretable heuristic rules. Future work (Phase 2 and 3) will focus on replacing the heuristic engine with a Deep Reinforcement Learning (DRL) agent trained on the context-aware datasets collected in this study.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
