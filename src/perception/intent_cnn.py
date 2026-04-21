@@ -176,7 +176,8 @@ class IntentCNN:
 
         # 1. Initialize CUDA context explicitly in the background thread
         if self._torch_device.type == "cuda":
-            torch.cuda.set_device(self._torch_device)
+            device_idx = self._torch_device.index if self._torch_device.index is not None else 0
+            torch.cuda.set_device(device_idx)
 
         # 2. Load PyTorch model in the same thread it will run
         if self.model_path and self.model_path.endswith(".pt"):
