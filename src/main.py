@@ -343,7 +343,7 @@ class AIServer:
 
         logger.info(
             "FPS=%.1f  mode=%s  persons=%d  buf=%d  depth_cov=%.0f%%",
-            fps, cmd.mode.name, len(frame_det.persons), len(c["exp_buffer"]), depth_coverage,
+            fps, cmd.mode.name, len(frame_det.persons), buf_size, depth_coverage,
         )
 
     def _show_dev_window(self, frame, frame_det, cmd) -> None:
