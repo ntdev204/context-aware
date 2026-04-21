@@ -8,7 +8,7 @@
 #   make jetson-build-dev
 #   make jetson-build-prod
 
-ARG L4T_TAG=r36.2.0
+ARG L4T_TAG=r36.4.0
 FROM dustynv/l4t-pytorch:${L4T_TAG} AS jetson-base
 
 # dustynv base image sets PIP_INDEX_URL to a local wheel server that is
