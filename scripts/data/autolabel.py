@@ -18,16 +18,16 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 # Constants & Thresholds
-FOCAL_LENGTH_PX = 554.0   # approx for AstraS depth camera
-CAMERA_W = 640.0          # reference image width
+FOCAL_LENGTH_PX = 554.0  # approx for AstraS depth camera
+CAMERA_W = 640.0  # reference image width
 CAMERA_H = 480.0
 
-STATIONARY_THRESHOLD = 100     # mm
-APPROACHING_THRESHOLD = 150    # mm/s
-DEPARTING_THRESHOLD = 150      # mm/s
+STATIONARY_THRESHOLD = 100  # mm
+APPROACHING_THRESHOLD = 150  # mm/s
+DEPARTING_THRESHOLD = 150  # mm/s
 
-CROSSING_THRESHOLD = 50        # px/s
-STAT_CX_THRESHOLD = 20         # px/s
+CROSSING_THRESHOLD = 50  # px/s
+STAT_CX_THRESHOLD = 20  # px/s
 ERRATIC_VAR_THRESHOLD = 25000  # mm^2 variance
 
 WINDOW_SIZE = 5
@@ -45,7 +45,7 @@ def compensate_motion(
     cx: float,
     vx: float,
     vy: float,
-    vtheta: float
+    vtheta: float,
 ):
     """
     Remove effect of robot's ego-motion from the observed delta_depth and delta_cx.
@@ -55,7 +55,9 @@ def compensate_motion(
     angle_to_person = calculate_angle_to_person(cx)
     # Robot moving forward (vx) reduces depth.
     # We multiply by 1000 to convert robot speed (m/s) to mm/s.
-    robot_depth_contrib = (vx * math.cos(angle_to_person) + vy * math.sin(angle_to_person)) * dt * 1000.0
+    robot_depth_contrib = (
+        (vx * math.cos(angle_to_person) + vy * math.sin(angle_to_person)) * dt * 1000.0
+    )
     delta_depth_true = delta_depth_raw + robot_depth_contrib
 
     # 2. CX compensation
@@ -85,7 +87,7 @@ def process_track(track_id: str, frames: list[dict[str, Any]], out_dir: Path):
             continue
 
         curr = frames[i]
-        prev = frames[i-1]
+        prev = frames[i - 1]
 
         dt = (curr["ts"] - prev["ts"]) / 1000.0
         if dt <= 0:
@@ -98,7 +100,9 @@ def process_track(track_id: str, frames: list[dict[str, Any]], out_dir: Path):
         vy = curr.get("vy", 0.0)
         vtheta = curr.get("vtheta", 0.0)
 
-        d_depth, d_cx = compensate_motion(dt, delta_depth_raw, delta_cx_raw, curr["cx"], vx, vy, vtheta)
+        d_depth, d_cx = compensate_motion(
+            dt, delta_depth_raw, delta_cx_raw, curr["cx"], vx, vy, vtheta
+        )
 
         curr["d_depth"] = d_depth
         curr["d_cx"] = d_cx
@@ -114,7 +118,7 @@ def process_track(track_id: str, frames: list[dict[str, Any]], out_dir: Path):
         var_delta_depth = np.var(d_depths)
         mean_delta_cx = np.mean([abs(dx) for dx in d_cxs])
 
-        label = "FOLLOWING" # Residual class
+        label = "FOLLOWING"  # Residual class
 
         # Rule-based classification
         if var_delta_depth > ERRATIC_VAR_THRESHOLD:
@@ -131,13 +135,14 @@ def process_track(track_id: str, frames: list[dict[str, Any]], out_dir: Path):
         frames[i]["label"] = label
 
     # Save to output directories based on label
-    for f in frames[WINDOW_SIZE - 1:]:
+    for f in frames[WINDOW_SIZE - 1 :]:
         label = f["label"]
         file_path = f.get("_src_path")
         if file_path and file_path.exists():
             dest_dir = out_dir / label
             dest_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(file_path, dest_dir / file_path.name)
+
 
 def run_autolabel(batch_dir: Path, output_dir: Path):
     """Main entrypoint for labeling a batch of ROIs."""
@@ -164,7 +169,9 @@ def run_autolabel(batch_dir: Path, output_dir: Path):
                     data["_src_path"] = img_path
                     tracks[str(data["tid"])].append(data)
 
-    logger.info(f"Found {len(tracks)} separate tracks across {sum(len(t) for t in tracks.values())} ROIs")
+    logger.info(
+        f"Found {len(tracks)} separate tracks across {sum(len(t) for t in tracks.values())} ROIs"
+    )
 
     for tid, frames in tracks.items():
         process_track(tid, frames, output_dir)
@@ -174,8 +181,15 @@ def run_autolabel(batch_dir: Path, output_dir: Path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Depth & Lateral aware Intent ROI Auto-labeling")
-    parser.add_argument("--batch-dir", type=str, required=True, help="Directory containing incoming ROIs and metadata.jsonl")
-    parser.add_argument("--output-dir", type=str, required=True, help="Output intent_dataset auto directory")
+    parser.add_argument(
+        "--batch-dir",
+        type=str,
+        required=True,
+        help="Directory containing incoming ROIs and metadata.jsonl",
+    )
+    parser.add_argument(
+        "--output-dir", type=str, required=True, help="Output intent_dataset auto directory"
+    )
 
     args = parser.parse_args()
     run_autolabel(Path(args.batch_dir), Path(args.output_dir))
