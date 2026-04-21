@@ -19,20 +19,18 @@ help:
 	@echo ""
 	@echo "  Context-Aware AI Server -- Makefile"
 	@echo ""
-	@echo "  Jetson (ARM64 + CUDA) - Dev Mode"
-	@echo "    make jetson-build-dev       Build jetson-dev image"
-	@echo "    make jetson-shell           Interactive shell"
-	@echo "    make jetson-test            Run tests on Jetson"
+	@echo "  Jetson Native (ARM64 + CUDA) - No Docker"
+	@echo "    make jetson-setup           Install native Jetson dependencies"
+	@echo "    make jetson-test            Run Pytest natively"
 	@echo "    make jetson-download-models Download YOLO weights"
-	@echo "    make jetson-export          Export YOLO to TensorRT engine"
+	@echo "    make jetson-export          Export YOLO to TensorRT engine natively"
 	@echo "    make jetson-health          RAM / GPU / temp report"
 	@echo "    make jetson-bench           GPU FPS benchmark"
 	@echo ""
-	@echo "  Production"
-	@echo "    make jetson-build-prod  Build production image"
-	@echo "    make jetson-up          Start server (background)"
-	@echo "    make jetson-logs        Tail logs"
-	@echo "    make jetson-restart     Restart after update"
+	@echo "  Jetson Native Production"
+	@echo "    make jetson-up          Start server (background nohup)"
+	@echo "    make jetson-logs        Tail native logs"
+	@echo "    make jetson-restart     Restart native daemon"
 	@echo "    make jetson-down        Stop server"
 	@echo ""
 	@echo "  Training Server"
@@ -55,14 +53,13 @@ help:
 
 # Jetson Dev
 
-jetson-build-dev:
-	$(JETSON_DEV) build jetson-dev
-
-jetson-shell:
-	$(JETSON_DEV) run --rm -it -p 8080:8080 jetson-dev
+jetson-setup:
+	@echo "Setting up Jetson native environment..."
+	sudo apt-get update && sudo apt-get install -y python3-pip libgl1 libglib2.0-0
+	pip3 install -r requirements.txt ultralytics==8.3.0
 
 jetson-test:
-	$(JETSON_DEV) run --rm jetson-dev python -m pytest tests/ -v --tb=short
+	python3 -m pytest tests/ -v --tb=short
 
 jetson-download-models:
 	@mkdir -p models/yolo
@@ -76,18 +73,17 @@ jetson-download-models:
 	fi
 
 jetson-export: jetson-download-models
-	$(JETSON_DEV) run --rm jetson-dev \
-		python scripts/deploy/export_engine.py models/yolo/yolo11s.pt --fp16 --workspace 1 --imgsz 480 640
+	python3 scripts/deploy/export_engine.py models/yolo/yolo11s.pt --fp16 --workspace 1 --imgsz 480 640
 	@echo "TensorRT engine ready: models/yolo/yolo11s.engine"
 
 jetson-proto:
-	$(JETSON_DEV) run --rm jetson-dev python scripts/infra/generate_proto.py
+	python3 scripts/infra/generate_proto.py
 
 jetson-health:
-	$(JETSON_DEV) run --rm jetson-dev python scripts/infra/health_check.py
+	python3 scripts/infra/health_check.py
 
 jetson-bench:
-	$(JETSON_DEV) run --rm jetson-dev python scripts/deploy/benchmark.py --frames 300
+	python3 scripts/deploy/benchmark.py --frames 300
 
 # Training Server
 
@@ -115,20 +111,24 @@ server-train-now:
 
 # Production
 
-jetson-build-prod:
-	$(JETSON_PROD) build jetson-prod
-
 jetson-up:
-	$(JETSON_PROD) up -d jetson-prod
+	@echo "Starting Jetson native daemon..."
+	nohup python3 scripts/core/main.py > jetson.log 2>&1 & echo $$! > jetson.pid
+	@echo "Daemon started. PID saved to jetson.pid"
 
 jetson-logs:
-	$(JETSON_PROD) logs -f jetson-prod
+	tail -f jetson.log
 
 jetson-down:
-	$(JETSON_PROD) down
+	@if [ -f jetson.pid ]; then \
+		kill -9 `cat jetson.pid` || true; \
+		rm jetson.pid; \
+		echo "Daemon stopped."; \
+	else \
+		echo "Daemon not running."; \
+	fi
 
-jetson-restart:
-	$(JETSON_PROD) restart jetson-prod
+jetson-restart: jetson-down jetson-up
 
 # Cleanup
 
