@@ -18,7 +18,7 @@ ENV PIP_INDEX_URL=https://pypi.org/simple \
     PIP_EXTRA_INDEX_URL=https://pypi.org/simple \
     PIP_RETRIES=1 \
     PIP_NO_CACHE_DIR=1 \
-    LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/tegra:$LD_LIBRARY_PATH
+    LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:/usr/lib/aarch64-linux-gnu/tegra:$LD_LIBRARY_PATH
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
