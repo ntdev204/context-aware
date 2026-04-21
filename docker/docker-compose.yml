@@ -92,9 +92,6 @@ services:
     env_file:
       - path: ../env/sync.env
         required: false          # skip gracefully if file missing (sync disabled)
-    environment:
-      - SYNC_LOG_DIR=/app/logs/experience
-      - SYNC_SSH_KEY=/root/.ssh/sync_key
     volumes:
       - ../logs:/app/logs                        # shared with jetson-prod
       - ${HOME}/.ssh:/root/.ssh:ro               # SSH keys from Jetson host
