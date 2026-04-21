@@ -24,7 +24,7 @@ import uuid
 from .api import ServerState, start_api_server
 from .communication import ZMQPublisher, ZMQSubscriber
 from .config import load_config, setup_logging
-from .experience import ExperienceBuffer, ExperienceCollector, ROICollector
+from .experience import ExperienceBuffer, ExperienceCollector
 from .navigation import (
     ContextBuilder,
     HeuristicPolicy,
@@ -146,16 +146,6 @@ def _build_pipeline(cfg) -> dict:
         session_id   = str(uuid.uuid4())[:8],
     ) if _hdf5_enabled else None
 
-    # ROI Collector — active when hdf5_enabled is False (default).
-    _session_id = str(uuid.uuid4())[:8]
-    roi_collector = ROICollector(
-        save_dir      = exp_cfg.get("roi_save_dir", "logs/roi_dataset"),
-        batch_size    = exp_cfg.get("roi_batch_size", 5_000),
-        jpeg_quality  = exp_cfg.get("roi_jpeg_quality", 90),
-        laptop_target = exp_cfg.get("roi_laptop_target", None),
-        session_id    = _session_id,
-        enabled       = not _hdf5_enabled,
-    )
 
     return dict(
         camera=camera,
@@ -170,7 +160,6 @@ def _build_pipeline(cfg) -> dict:
         subscriber=subscriber,
         exp_buffer=exp_buffer,
         exp_collector=exp_collector,
-        roi_collector=roi_collector,
         api_host=api_cfg.get("host", "0.0.0.0"),
         api_port=api_cfg.get("port", 8080),
         stream_jpeg_quality=api_cfg.get("stream_jpeg_quality", 70),
@@ -223,9 +212,7 @@ class AIServer:
         c["camera"].stop()
         if c["exp_buffer"] is not None:
             c["exp_buffer"].stop()
-        # Flush any remaining ROI images before exit.
-        c["roi_collector"].flush()
-        stats = c["exp_collector"].stats if c["exp_collector"] else {"roi_saved": c["roi_collector"].count}
+        stats = c["exp_collector"].stats if c["exp_collector"] else {}
         logger.info("AI Server stopped. Stats: %s", stats)
 
     def _inference_loop(self) -> None:
@@ -244,7 +231,6 @@ class AIServer:
         safety  = c["safety_monitor"]
         pub     = c["publisher"]
         exp_col     = c["exp_collector"]
-        roi_col     = c["roi_collector"]
 
         frame_id  = 0
         fps_count = 0
@@ -298,7 +284,6 @@ class AIServer:
                     robot_state  = robot_state,
                 )
 
-            roi_col.collect(frame=frame, rois=rois, frame_id=frame_id, detections=frame_det.persons)
 
             frame_id  += 1
             fps_count += 1
@@ -345,7 +330,7 @@ class AIServer:
         depth_count = sum(1 for d in all_dets if d.distance_source == "depth")
         depth_coverage = (depth_count / len(all_dets) * 100) if all_dets else 0.0
 
-        buf_size = len(c["exp_buffer"]) if c["exp_buffer"] is not None else c["roi_collector"].count
+        buf_size = len(c["exp_buffer"]) if c["exp_buffer"] is not None else 0
         self._state.update_metrics(
             fps=fps,
             persons=len(frame_det.persons),
