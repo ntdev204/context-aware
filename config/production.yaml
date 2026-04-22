@@ -113,4 +113,4 @@ experience:
 api:
   host: "0.0.0.0"
   port: 8080
-  stream_jpeg_quality: 70
+  stream_jpeg_quality: 45 # Hạ từ 70 xuống 45 để truyền qua 3G/4G mượt mà, độ trễ thấp

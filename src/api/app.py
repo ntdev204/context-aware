@@ -93,11 +93,16 @@ def create_app(state: ServerState) -> FastAPI:
     @app.get("/stream", tags=["monitoring"])
     def mjpeg_stream() -> StreamingResponse:
         def generate() -> Generator[bytes, None, None]:
+            last_frame = b""
             while state.is_running():
                 frame = state.get_frame()
-                if frame:
+                # Chỉ gửi khi có ảnh mới, tránh gửi đi gửi lại 1 ảnh làm tắc nghẽn mạng 4G
+                if frame and frame != last_frame:
                     yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
-                time.sleep(0.033)
+                    last_frame = frame
+                
+                # Giới hạn tốc độ Stream tối đa 15 FPS để phù hợp mạng di động (chống giật/delay)
+                time.sleep(0.066)
 
         return StreamingResponse(
             generate(),
