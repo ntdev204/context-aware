@@ -60,6 +60,7 @@ services:
       - CONFIG_PATH=/app/config/production.yaml
     volumes:
       - ../models:/app/models
+      - ../models/torch_cache:/data/models/torch # Lưu cache model tải từ mạng để không cần tải lại
       - ../logs:/app/logs
       - ../data:/app/data
       - ../config:/app/config:ro
