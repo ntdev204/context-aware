@@ -25,11 +25,11 @@ camera:
 
 perception:
   yolo:
-    model_path: models/yolo/yolo11s.engine
+    model_path: models/yolo/yolo11n.engine
     use_tensorrt: true
     confidence_threshold: 0.5
     iou_threshold: 0.45
-    input_size: [480, 640]
+    input_size: [320, 320]
     classes:
       [
         "person",

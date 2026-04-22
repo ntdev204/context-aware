@@ -66,19 +66,19 @@ jetson-test:
 
 jetson-download-models:
 	@mkdir -p models/yolo
-	@if [ ! -f models/yolo/yolo11s.pt ]; then \
-		echo "Downloading yolo11s.pt (18MB)..."; \
-		curl -L -o models/yolo/yolo11s.pt \
-			https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt; \
-		echo "Downloaded: models/yolo/yolo11s.pt"; \
+	@if [ ! -f models/yolo/yolo11n.pt ]; then \
+		echo "Downloading yolo11n.pt (18MB)..."; \
+		curl -L -o models/yolo/yolo11n.pt \
+			https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt; \
+		echo "Downloaded: models/yolo/yolo11n.pt"; \
 	else \
-		echo "models/yolo/yolo11s.pt already present."; \
+		echo "models/yolo/yolo11n.pt already present."; \
 	fi
 
 jetson-export: jetson-download-models
 	$(JETSON_DEV) run --rm jetson-dev \
-		python scripts/deploy/export_engine.py models/yolo/yolo11s.pt --fp16 --workspace 2 --imgsz 480 640
-	@echo "TensorRT engine ready: models/yolo/yolo11s.engine"
+		python scripts/deploy/export_engine.py models/yolo/yolo11n.pt --fp16 --workspace 2 --imgsz 320 320
+	@echo "TensorRT engine ready: models/yolo/yolo11n.engine"
 
 jetson-proto:
 	$(JETSON_DEV) run --rm jetson-dev python scripts/infra/generate_proto.py

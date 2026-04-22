@@ -19,12 +19,21 @@ camera:
 
 perception:
   yolo:
-    model_path: models/yolo/yolo11s.pt
+    model_path: models/yolo/yolo11n.pt
     use_tensorrt: false
     confidence_threshold: 0.5
     iou_threshold: 0.45
-    input_size: [480, 640]
-    classes: ["person", "obstacle", "door", "wall", "free_space"]
+    input_size: [320, 320]
+    classes:
+      [
+        "person",
+        "obstacle",
+        "static_obstacle",
+        "dynamic_hazard",
+        "door",
+        "wall",
+        "free_space",
+      ]
 
   tracker:
     max_age: 30
