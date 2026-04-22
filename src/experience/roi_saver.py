@@ -36,6 +36,11 @@ class ROISaver:
         if not self._running or not rois:
             return
 
+        # Chỉ lưu 1 ảnh sau mỗi 15 frame (tương đương ~2 ảnh/giây)
+        # Việc này giúp tránh rác dữ liệu do lưu hàng chục ảnh giống hệt nhau trong 1 giây.
+        if frame_id % 15 != 0:
+            return
+
         # Snapshot necessary info
         roi_data = []
         for r in rois:
