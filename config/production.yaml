@@ -52,7 +52,7 @@ perception:
     padding_ratio: 0.1
 
   cnn_intent:
-    model_path: models/cnn_intent/intent_v1.pt
+    model_path: null # Tạm thời tắt để tiết kiệm RAM
     use_tensorrt: false
     max_batch_size: 5
 
