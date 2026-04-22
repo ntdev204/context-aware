@@ -36,15 +36,20 @@ class ROISaver:
         if not self._running or not rois:
             return
 
-        # Chỉ lưu 1 ảnh sau mỗi 15 frame (tương đương ~2 ảnh/giây)
-        # Việc này giúp tránh rác dữ liệu do lưu hàng chục ảnh giống hệt nhau trong 1 giây.
-        if frame_id % 15 != 0:
-            return
-
         # Snapshot necessary info
         roi_data = []
         for r in rois:
-            roi_data.append((r.track_id, r.image.copy()))
+            # Lưu người mới xuất hiện ngay lập tức, hoặc người cũ sau mỗi 15 frames (~2 ảnh/giây)
+            if not hasattr(self, "_last_saved"):
+                self._last_saved = {}
+                
+            last_f = self._last_saved.get(r.track_id, -999)
+            if frame_id - last_f >= 15:
+                roi_data.append((r.track_id, r.image.copy()))
+                self._last_saved[r.track_id] = frame_id
+
+        if not roi_data:
+            return
 
         try:
             self._queue.put_nowait((frame_id, roi_data))
