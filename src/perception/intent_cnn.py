@@ -113,9 +113,14 @@ class IntentCNN:
         import torch.nn as nn
         import torchvision.models as tv_models
 
-        backbone = tv_models.mobilenet_v3_small(
-            weights=tv_models.MobileNet_V3_Small_Weights.DEFAULT
-        )
+        try:
+            backbone = tv_models.mobilenet_v3_small(
+                weights=tv_models.MobileNet_V3_Small_Weights.DEFAULT
+            )
+        except Exception as e:
+            logger.warning("Không có Internet để tải weights gốc (%s). Dùng random weights tạm thời.", e)
+            backbone = tv_models.mobilenet_v3_small(weights=None)
+            
         backbone.classifier = nn.Identity()
 
         self._model = _IntentModel(backbone, feature_dim=576)
