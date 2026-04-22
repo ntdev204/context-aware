@@ -61,6 +61,7 @@ services:
     volumes:
       - ../models:/app/models
       - ../logs:/app/logs
+      - ../data:/app/data
       - ../config:/app/config:ro
     devices:
       - "/dev/bus/usb:/dev/bus/usb"
@@ -94,6 +95,7 @@ services:
         required: false          # skip gracefully if file missing (sync disabled)
     volumes:
       - ../logs:/app/logs                        # shared with jetson-prod
+      - ../data:/app/data                        # datasets
       - ${HOME}/.ssh:/root/.ssh:ro               # SSH keys from Jetson host
     networks: [robot-net]
     restart: unless-stopped
@@ -115,8 +117,8 @@ services:
     image: context-aware:server
     container_name: context-aware-server
     volumes:
-      - ../roi_dataset:/data/roi_incoming      # batches từ Jetson
-      - ../intent_dataset:/data/intent_dataset  # labeled dataset
+      - ../data/roi_dataset:/data/roi_incoming      # batches từ Jetson
+      - ../data/intent_dataset:/data/intent_dataset  # labeled dataset
       - ../models:/workspace/models          # share model weights
       - ../scripts:/workspace/scripts:ro     # share scripts
       - ../src:/workspace/src:ro             # share model definitions

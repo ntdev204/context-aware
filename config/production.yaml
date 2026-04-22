@@ -103,7 +103,7 @@ experience:
   async_write: true
 
   # ── ROI Collection mode (active when hdf5_enabled: false) ──────────────
-  roi_save_dir: /app/logs/roi_dataset # local staging dir on Jetson
+  roi_save_dir: /app/data/roi_dataset # local staging dir on Jetson
   roi_batch_size: 5000 # images per archive before sending
   roi_jpeg_quality: 90 # higher = better features for CNN
 
