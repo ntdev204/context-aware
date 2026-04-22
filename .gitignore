@@ -49,3 +49,7 @@ research_data/*/
 
 # ── Agents ────────────────────────────────────────────────────────────
 .agent/
+
+# ── Dataset (bỏ qua 200GB+ để push code lên GitHub) ────────────────
+dataset/intent_dataset/
+roi_dataset/
