@@ -87,7 +87,7 @@ communication:
     detections_port: 5556
     robot_state_port: 5560
     config_port: 5570
-    rasp_pi_ip: "192.168.1.101"
+    rasp_pi_ip: "25.12.4.1"
     publish_rate_nav: 30
     publish_rate_det: 10
     sndhwm: 2
