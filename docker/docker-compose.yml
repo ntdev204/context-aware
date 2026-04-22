@@ -121,6 +121,7 @@ services:
       - ../scripts:/workspace/scripts:ro     # share scripts
       - ../src:/workspace/src:ro             # share model definitions
       - ../config:/workspace/config:ro
+      - server-ssh-keys:/root/.ssh           # Giữ vĩnh viễn chìa khóa SSH
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
@@ -142,5 +143,4 @@ services:
               capabilities: [gpu]
 
 volumes:
-  roi-incoming:
-  intent-dataset:
+  server-ssh-keys:
