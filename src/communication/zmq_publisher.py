@@ -103,7 +103,7 @@ class ZMQPublisher:
         sock = self._ctx.socket(zmq.PUB)
         sock.setsockopt(zmq.SNDHWM, 2)
         sock.setsockopt(zmq.LINGER, 0)
-        sock.setsockopt(zmq.CONFLATE, 1)
+        # Bỏ zmq.CONFLATE vì CONFLATE làm hỏng (drop) multipart message trong ZMQ PUB
         sock.bind(f"tcp://{self.bind_host}:{port}")
         return sock
 
