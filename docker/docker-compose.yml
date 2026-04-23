@@ -16,7 +16,7 @@ services:
       target: jetson-dev
     image: context-aware:jetson-dev
     container_name: context-aware-jetson-dev
-    runtime: nvidia
+    network_mode: host
     privileged: true
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
@@ -28,14 +28,6 @@ services:
       - ..:/app
     devices:
       - "/dev/bus/usb:/dev/bus/usb"
-    ports:
-      - "5555:5555"
-      - "5556:5556"
-      - "5560:5560"
-      - "5570:5570"
-      - "50051:50051"
-      - "8080:8080"
-    networks: [robot-net]
     command: /bin/bash
     stdin_open: true
     tty: true
@@ -50,7 +42,7 @@ services:
       target: jetson-prod
     image: context-aware:jetson-prod
     container_name: context-aware-prod
-    runtime: nvidia
+    network_mode: host
     privileged: true
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
@@ -66,14 +58,6 @@ services:
       - ../config:/app/config:ro
     devices:
       - "/dev/bus/usb:/dev/bus/usb"
-    ports:
-      - "5555:5555"
-      - "5556:5556"
-      - "5560:5560"
-      - "5570:5570"
-      - "50051:50051"
-      - "8080:8080"
-    networks: [robot-net]
     restart: unless-stopped
     mem_limit: 3g
     memswap_limit: 4g
@@ -88,7 +72,7 @@ services:
   jetson-sync:
     profiles: ["jetson-prod"]
     image: context-aware:jetson-prod   # reuse existing image — no extra build
-    container_name: context-aware-sync
+    network_mode: host
     depends_on:
       - jetson-prod
     env_file:
@@ -98,7 +82,6 @@ services:
       - ../logs:/app/logs                        # shared with jetson-prod
       - ../data:/app/data                        # datasets
       - ${HOME}/.ssh:/root/.ssh:ro               # SSH keys from Jetson host
-    networks: [robot-net]
     restart: unless-stopped
     command: >
       sh -c '
