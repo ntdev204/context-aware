@@ -33,7 +33,7 @@ class NavigationCommand:
     timestamp: float = field(default_factory=time.time)
 
     def is_safe_to_move(self) -> bool:
-        return self.mode != NavigationMode.STOP and self.velocity_scale > 0
+        return self.mode != NavigationMode.STOP and self.velocity_scale != 0.0
 
     def __repr__(self) -> str:
         return (

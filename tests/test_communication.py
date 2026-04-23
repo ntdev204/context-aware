@@ -21,7 +21,12 @@ class TestNavCommandSerialization:
     def test_clip_velocity_negative(self):
         cmd = NavigationCommand(mode=NavigationMode.CRUISE, velocity_scale=-0.5)
         cmd.clip()
-        assert cmd.velocity_scale == 0.0
+        assert cmd.velocity_scale == -0.5
+
+    def test_clip_velocity_underflow(self):
+        cmd = NavigationCommand(mode=NavigationMode.CRUISE, velocity_scale=-2.5)
+        cmd.clip()
+        assert cmd.velocity_scale == -1.0
 
     def test_clip_heading(self):
         import math
