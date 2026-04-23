@@ -192,7 +192,6 @@ class IntentCNN:
 
     def _worker(self) -> None:
         """Background inference loop."""
-        import torch
 
         while self._running:
             rois = None

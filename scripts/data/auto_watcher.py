@@ -23,8 +23,9 @@ import shutil
 import subprocess
 import sys
 import time
-import yaml
 from pathlib import Path
+
+import yaml
 
 logging.basicConfig(
     level=logging.INFO,
@@ -213,7 +214,7 @@ def run_with_watchdog(
     auto_train: bool,
     training_cfg: dict,
 ) -> None:
-    from watchdog.events import FileSystemEventHandler, FileCreatedEvent
+    from watchdog.events import FileCreatedEvent, FileSystemEventHandler
     from watchdog.observers import Observer
 
     class BatchHandler(FileSystemEventHandler):
@@ -330,7 +331,7 @@ def main() -> None:
 
     if training_yaml.exists():
         try:
-            with open(training_yaml, "r") as f:
+            with open(training_yaml) as f:
                 t_data = yaml.safe_load(f)
                 if t_data and "training" in t_data:
                     training_cfg = t_data["training"]
