@@ -109,36 +109,28 @@ class ZMQPublisher:
 
     @staticmethod
     def _encode_nav_cmd(cmd: NavigationCommand) -> bytes:
-        """Encode NavigationCommand to Protobuf bytes.
+        """Encode NavigationCommand thành binary struct để gửi cho Pi.
 
-        Import proto here to avoid import-time dependency on generated code.
-        Falls back to a simple binary struct if proto not compiled yet.
+        Format (25 bytes): i f f i f f B
+          - mode           : int32   (NavigationMode)
+          - velocity_scale : float32 ([-1.0, 1.0])
+          - heading_offset : float32 (radians)
+          - follow_id      : int32   (track_id)
+          - timestamp      : float32 (epoch seconds, truncated ok)
+          - confidence     : float32
+          - safety_override: uint8
         """
-        try:
-            from .proto import messages_pb2 as pb
-
-            msg = pb.NavigationCommand()
-            msg.mode = int(cmd.mode)
-            msg.velocity_scale = cmd.velocity_scale
-            msg.heading_offset = cmd.heading_offset
-            msg.follow_target_id = cmd.follow_target_id
-            msg.timestamp = cmd.timestamp
-            msg.confidence = cmd.confidence
-            msg.safety_override = cmd.safety_override
-            return msg.SerializeToString()
-        except (ImportError, AttributeError):
-            import struct
-
-            return struct.pack(
-                "!iffiffB",
-                int(cmd.mode),
-                cmd.velocity_scale,
-                cmd.heading_offset,
-                cmd.follow_target_id,
-                cmd.timestamp,
-                cmd.confidence,
-                int(cmd.safety_override),
-            )
+        import struct
+        return struct.pack(
+            "!iffiffB",
+            int(cmd.mode),
+            float(cmd.velocity_scale),
+            float(cmd.heading_offset),
+            int(cmd.follow_target_id),
+            float(cmd.timestamp),
+            float(cmd.confidence),
+            int(cmd.safety_override),
+        )
 
     @staticmethod
     def _encode_detections(frame_det: FrameDetections) -> bytes:
