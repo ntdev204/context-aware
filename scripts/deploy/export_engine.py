@@ -28,8 +28,8 @@ def main() -> None:
         "--imgsz",
         type=int,
         nargs="+",
-        default=[320, 320],
-        help="Input size as H W (default: 320 320 for sub-10ms latency)",
+        default=[480, 640],
+        help="Input size as H W (default: 480 640 for landscape camera)",
     )
     parser.add_argument(
         "--workspace", type=int, default=2, help="TensorRT workspace in GB (default: 2)"

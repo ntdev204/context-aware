@@ -29,7 +29,7 @@ perception:
     use_tensorrt: true
     confidence_threshold: 0.5
     iou_threshold: 0.45
-    input_size: [320, 320]
+    input_size: [480, 640]
     classes:
       [
         "person",
