@@ -24,7 +24,9 @@ import uuid
 from .api import ServerState, start_api_server
 from .communication import ZMQPublisher, ZMQSubscriber
 from .config import load_config, setup_logging
-from .experience import ExperienceBuffer, ExperienceCollector
+from .experience.buffer import ExperienceBuffer
+from .experience.collector import ExperienceCollector
+from .experience.roi_saver import ROISaver
 from .navigation import (
     ContextBuilder,
     HeuristicPolicy,
@@ -51,101 +53,122 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _build_pipeline(cfg) -> dict:
-    cam_cfg  = cfg.section("camera")
-    per_cfg  = cfg.section("perception")
-    nav_cfg  = cfg.section("navigation")
-    zmq_cfg  = cfg.section("communication.zmq")
-    exp_cfg  = cfg.section("experience")
-    ctx_cfg  = cfg.section("context")
+    cam_cfg = cfg.section("camera")
+    per_cfg = cfg.section("perception")
+    nav_cfg = cfg.section("navigation")
+    zmq_cfg = cfg.section("communication.zmq")
+    exp_cfg = cfg.section("experience")
+    ctx_cfg = cfg.section("context")
     safe_cfg = cfg.section("navigation.safety")
-    api_cfg  = cfg.section("api")
+    api_cfg = cfg.section("api")
 
     camera = Camera(
-        device_id = cam_cfg.get("device_id", 0),
-        backend   = cam_cfg.get("backend", "usb"),
-        width     = cam_cfg.get("width", 1280),
-        height    = cam_cfg.get("height", 720),
-        fps       = cam_cfg.get("fps", 30),
+        device_id=cam_cfg.get("device_id", 0),
+        backend=cam_cfg.get("backend", "usb"),
+        width=cam_cfg.get("width", 1280),
+        height=cam_cfg.get("height", 720),
+        fps=cam_cfg.get("fps", 30),
     )
 
     yolo = YOLODetector(
-        model_path           = per_cfg.get("yolo.model_path", "models/yolo/yolo11s.pt"),
-        use_tensorrt         = per_cfg.get("yolo.use_tensorrt", False),
-        confidence_threshold = per_cfg.get("yolo.confidence_threshold", 0.5),
-        iou_threshold        = per_cfg.get("yolo.iou_threshold", 0.45),
-        input_size           = per_cfg.get("yolo.input_size", 640),
+        model_path=per_cfg.get("yolo.model_path", "models/yolo/yolo11s.pt"),
+        use_tensorrt=per_cfg.get("yolo.use_tensorrt", False),
+        confidence_threshold=per_cfg.get("yolo.confidence_threshold", 0.5),
+        iou_threshold=per_cfg.get("yolo.iou_threshold", 0.45),
+        input_size=per_cfg.get("yolo.input_size", 640),
     )
 
     tracker = Tracker(
-        max_age       = per_cfg.get("tracker.max_age", 30),
-        min_hits      = per_cfg.get("tracker.min_hits", 3),
-        iou_threshold = per_cfg.get("tracker.iou_threshold", 0.3),
+        max_age=per_cfg.get("tracker.max_age", 30),
+        min_hits=per_cfg.get("tracker.min_hits", 3),
+        iou_threshold=per_cfg.get("tracker.iou_threshold", 0.3),
     )
 
     roi_extractor = ROIExtractor(
-        output_width  = per_cfg.get("roi.width", 128),
-        output_height = per_cfg.get("roi.height", 256),
-        padding_ratio = per_cfg.get("roi.padding_ratio", 0.1),
+        output_width=per_cfg.get("roi.width", 128),
+        output_height=per_cfg.get("roi.height", 256),
+        padding_ratio=per_cfg.get("roi.padding_ratio", 0.1),
     )
 
     intent_cnn = IntentCNN(
-        model_path     = per_cfg.get("cnn_intent.model_path", None),
-        use_tensorrt   = per_cfg.get("cnn_intent.use_tensorrt", False),
-        max_batch_size = per_cfg.get("cnn_intent.max_batch_size", 5),
+        model_path=per_cfg.get("cnn_intent.model_path", None),
+        use_tensorrt=per_cfg.get("cnn_intent.use_tensorrt", False),
+        max_batch_size=per_cfg.get("cnn_intent.max_batch_size", 5),
     )
 
     context_builder = ContextBuilder(
-        temporal_stack_size = ctx_cfg.get("temporal_stack_size", 1),
-        state_version       = ctx_cfg.get("state_version", "v1-snapshot"),
-        occupancy_grid_size = ctx_cfg.get("occupancy_grid_size", 8),
+        temporal_stack_size=ctx_cfg.get("temporal_stack_size", 1),
+        state_version=ctx_cfg.get("state_version", "v1-snapshot"),
+        occupancy_grid_size=ctx_cfg.get("occupancy_grid_size", 8),
     )
 
     heuristic_policy = HeuristicPolicy(
-        cruise_free_space_threshold = nav_cfg.get("heuristic.cruise_free_space_threshold", 0.8),
-        cruise_velocity             = nav_cfg.get("heuristic.cruise_velocity", 1.0),
-        cautious_velocity           = nav_cfg.get("heuristic.cautious_velocity", 0.6),
-        avoid_velocity              = nav_cfg.get("heuristic.avoid_velocity", 0.3),
-        follow_velocity             = nav_cfg.get("heuristic.follow_velocity", 0.5),
-        hard_stop_distance          = safe_cfg.get("hard_stop_distance_person", 0.5),
-        slow_down_distance          = safe_cfg.get("slow_down_distance", 1.0),
+        cruise_free_space_threshold=nav_cfg.get("heuristic.cruise_free_space_threshold", 0.8),
+        cruise_velocity=nav_cfg.get("heuristic.cruise_velocity", 1.0),
+        cautious_velocity=nav_cfg.get("heuristic.cautious_velocity", 0.6),
+        avoid_velocity=nav_cfg.get("heuristic.avoid_velocity", 0.3),
+        follow_velocity=nav_cfg.get("heuristic.follow_velocity", 0.5),
+        hard_stop_distance=safe_cfg.get("hard_stop_distance_person", 0.3),
+        slow_down_distance=safe_cfg.get("slow_down_distance", 1.0),
+        auto_follow=nav_cfg.get("heuristic.auto_follow", False),
+        follow_target_distance=nav_cfg.get("heuristic.follow_target_distance", 0.5),
+        follow_deadband=nav_cfg.get("heuristic.follow_deadband", 0.08),
+        follow_kp=nav_cfg.get("heuristic.follow_kp", 1.0),
+        target_lost_timeout_s=nav_cfg.get("heuristic.target_lost_timeout_s", 2.0),
     )
 
     safety_monitor = SafetyMonitor(
-        hard_stop_person       = safe_cfg.get("hard_stop_distance_person", 0.5),
-        hard_stop_obstacle     = safe_cfg.get("hard_stop_distance_obstacle", 0.3),
-        slow_down_distance     = safe_cfg.get("slow_down_distance", 1.0),
-        slow_down_factor       = safe_cfg.get("slow_down_factor", 0.5),
-        watchdog_timeout_ms    = safe_cfg.get("watchdog_timeout_ms", 500.0),
-        battery_threshold      = safe_cfg.get("battery_threshold_pct", 10.0),
-        watchdog_log_interval_s = safe_cfg.get("watchdog_log_interval_s", 5.0),
+        hard_stop_person=safe_cfg.get("hard_stop_distance_person", 0.5),
+        hard_stop_obstacle=safe_cfg.get("hard_stop_distance_obstacle", 0.3),
+        slow_down_distance=safe_cfg.get("slow_down_distance", 1.0),
+        slow_down_factor=safe_cfg.get("slow_down_factor", 0.5),
+        watchdog_timeout_ms=safe_cfg.get("watchdog_timeout_ms", 500.0),
+        battery_threshold=safe_cfg.get("battery_threshold_pct", 10.0),
+        watchdog_log_interval_s=safe_cfg.get("watchdog_log_interval_s", 5.0),
     )
 
     publisher = ZMQPublisher(
-        nav_cmd_port    = zmq_cfg.get("nav_cmd_port", 5555),
-        detections_port = zmq_cfg.get("detections_port", 5556),
+        nav_cmd_port=zmq_cfg.get("nav_cmd_port", 5555),
+        detections_port=zmq_cfg.get("detections_port", 5556),
     )
 
     subscriber = ZMQSubscriber(
-        robot_state_port    = zmq_cfg.get("robot_state_port", 5560),
-        rasp_pi_ip          = zmq_cfg.get("rasp_pi_ip", "192.168.1.101"),
-        watchdog_timeout_ms = safe_cfg.get("watchdog_timeout_ms", 500.0),
+        robot_state_port=zmq_cfg.get("robot_state_port", 5560),
+        rasp_pi_ip=zmq_cfg.get("rasp_pi_ip", "192.168.1.101"),
+        watchdog_timeout_ms=safe_cfg.get("watchdog_timeout_ms", 500.0),
     )
 
     _hdf5_enabled = exp_cfg.get("hdf5_enabled", False)
-    exp_buffer = ExperienceBuffer(
-        max_size     = exp_cfg.get("buffer_size", 10_000),
-        write_dir    = exp_cfg.get("write_dir", "logs/experience"),
-        write_format = exp_cfg.get("write_format", "hdf5"),
-        async_write  = exp_cfg.get("async_write", True),
-    ) if _hdf5_enabled else None
+    exp_buffer = (
+        ExperienceBuffer(
+            max_size=exp_cfg.get("buffer_size", 10_000),
+            write_dir=exp_cfg.get("write_dir", "logs/experience"),
+            write_format=exp_cfg.get("write_format", "hdf5"),
+            async_write=exp_cfg.get("async_write", True),
+        )
+        if _hdf5_enabled
+        else None
+    )
 
-    exp_collector = ExperienceCollector(
-        buffer       = exp_buffer,
-        jpeg_quality = exp_cfg.get("jpeg_quality", 85),
-        enabled      = _hdf5_enabled,
-        session_id   = str(uuid.uuid4())[:8],
-    ) if _hdf5_enabled else None
+    exp_collector = (
+        ExperienceCollector(
+            buffer=exp_buffer,
+            jpeg_quality=exp_cfg.get("jpeg_quality", 85),
+            enabled=_hdf5_enabled,
+            session_id=str(uuid.uuid4())[:8],
+        )
+        if _hdf5_enabled
+        else None
+    )
 
+    roi_saver = (
+        ROISaver(
+            save_dir=exp_cfg.get("roi_save_dir", "logs/roi_dataset"),
+            jpeg_quality=exp_cfg.get("roi_jpeg_quality", 90),
+        )
+        if not _hdf5_enabled
+        else None
+    )
 
     return dict(
         camera=camera,
@@ -160,6 +183,7 @@ def _build_pipeline(cfg) -> dict:
         subscriber=subscriber,
         exp_buffer=exp_buffer,
         exp_collector=exp_collector,
+        roi_saver=roi_saver,
         api_host=api_cfg.get("host", "0.0.0.0"),
         api_port=api_cfg.get("port", 8080),
         stream_jpeg_quality=api_cfg.get("stream_jpeg_quality", 70),
@@ -186,18 +210,21 @@ class AIServer:
         # HDF5 writer only started when explicitly enabled.
         if c["exp_buffer"] is not None:
             c["exp_buffer"].start()
+        if c["roi_saver"] is not None:
+            c["roi_saver"].start()
+
         c["camera"].start()
         c["publisher"].start()
         c["subscriber"].start(
-            on_state   = self._on_robot_state,
-            on_timeout = self._on_watchdog_timeout,
+            on_state=self._on_robot_state,
+            on_timeout=self._on_watchdog_timeout,
         )
 
         start_api_server(self._state, host=c["api_host"], port=c["api_port"])
 
         self._running = True
         self._state.set_running(True)
-        signal.signal(signal.SIGINT,  self._shutdown_handler)
+        signal.signal(signal.SIGINT, self._shutdown_handler)
         signal.signal(signal.SIGTERM, self._shutdown_handler)
 
         logger.info("All components started -- entering inference loop")
@@ -212,29 +239,32 @@ class AIServer:
         c["camera"].stop()
         if c["exp_buffer"] is not None:
             c["exp_buffer"].stop()
+        if c["roi_saver"] is not None:
+            c["roi_saver"].stop()
+
         stats = c["exp_collector"].stats if c["exp_collector"] else {}
         logger.info("AI Server stopped. Stats: %s", stats)
 
     def _inference_loop(self) -> None:
         c = self._components
-        fps_target       = self.cfg.get("system.fps_target", 30)
-        frame_interval   = 1.0 / fps_target
-        jpeg_quality     = c["stream_jpeg_quality"]
-        dev_mode         = self.cfg.get("system.mode", "production") == "development"
+        fps_target = self.cfg.get("system.fps_target", 30)
+        frame_interval = 1.0 / fps_target
+        jpeg_quality = c["stream_jpeg_quality"]
+        dev_mode = self.cfg.get("system.mode", "production") == "development"
 
-        yolo    = c["yolo"]
+        yolo = c["yolo"]
         tracker = c["tracker"]
-        roi_ex  = c["roi_extractor"]
-        cnn     = c["intent_cnn"]
+        roi_ex = c["roi_extractor"]
+        cnn = c["intent_cnn"]
         ctx_bld = c["context_builder"]
-        policy  = c["heuristic_policy"]
-        safety  = c["safety_monitor"]
-        pub     = c["publisher"]
-        exp_col     = c["exp_collector"]
+        policy = c["heuristic_policy"]
+        safety = c["safety_monitor"]
+        pub = c["publisher"]
+        exp_col = c["exp_collector"]
 
-        frame_id  = 0
+        frame_id = 0
         fps_count = 0
-        t_fps     = time.monotonic()
+        t_fps = time.monotonic()
 
         while self._running:
             t0 = time.monotonic()
@@ -246,15 +276,15 @@ class AIServer:
 
             frame_det = yolo.detect(frame, frame_id=frame_id, depth_frame=depth_frame)
             frame_det = tracker.update(frame_det, frame.shape)
-            rois      = roi_ex.extract(frame, frame_det)
+            rois = roi_ex.extract(frame, frame_det)
             intent_preds = cnn.predict_batch(rois)
 
             self._annotate_intents(frame_det, intent_preds)
 
             observation = ctx_bld.build(frame_det, intent_preds)
-            cmd         = policy.decide(observation, frame_det, intent_preds)
-            cmd         = safety.check(cmd, frame_det, intent_preds)
-            cmd         = self._apply_mode_override(cmd)
+            cmd = policy.decide(observation, frame_det, intent_preds)
+            cmd = safety.check(cmd, frame_det, intent_preds)
+            cmd = self._apply_mode_override(cmd)
 
             ctx_bld.update_prev_action(cmd)
 
@@ -265,7 +295,11 @@ class AIServer:
                 self._show_dev_window(frame, frame_det, cmd)
 
             annotated = draw_detections(
-                frame, frame_det.persons, frame_det.obstacles, cmd.mode.name, self._state.get_metrics().fps,
+                frame,
+                frame_det.persons,
+                frame_det.obstacles,
+                cmd.mode.name,
+                self._state.get_metrics().fps,
             )
             jpeg = encode_jpeg(annotated, quality=jpeg_quality)
             if jpeg:
@@ -276,16 +310,19 @@ class AIServer:
             # HDF5 path — only active when hdf5_enabled: true in config.
             if exp_col is not None:
                 exp_col.collect(
-                    raw_frame    = frame,
-                    frame_det    = frame_det,
-                    intent_preds = intent_preds,
-                    observation  = observation,
-                    cmd          = cmd,
-                    robot_state  = robot_state,
+                    raw_frame=frame,
+                    frame_det=frame_det,
+                    intent_preds=intent_preds,
+                    observation=observation,
+                    cmd=cmd,
+                    robot_state=robot_state,
                 )
 
+            # ROI saver path — active when hdf5_enabled: false
+            elif c["roi_saver"] is not None and len(rois) > 0:
+                c["roi_saver"].push(rois, frame_id)
 
-            frame_id  += 1
+            frame_id += 1
             fps_count += 1
 
             elapsed_5s = time.monotonic() - t_fps
@@ -307,10 +344,10 @@ class AIServer:
         for person in frame_det.persons:
             pred = intent_map.get(person.track_id)
             if pred:
-                person.intent_class      = pred.intent_class
-                person.intent_name       = pred.intent_name
+                person.intent_class = pred.intent_class
+                person.intent_name = pred.intent_name
                 person.intent_confidence = pred.confidence
-                person.dx, person.dy     = pred.dx, pred.dy
+                person.dx, person.dy = pred.dx, pred.dy
 
     def _apply_mode_override(self, cmd):
         override = self._state.get_mode_override()
@@ -324,7 +361,9 @@ class AIServer:
             logger.warning("Unknown mode override '%s' -- ignoring", override)
         return cmd
 
-    def _update_metrics(self, fps_count: int, elapsed: float, frame_det, frame_id: int, cmd, c: dict) -> None:
+    def _update_metrics(
+        self, fps_count: int, elapsed: float, frame_det, frame_id: int, cmd, c: dict
+    ) -> None:
         fps = fps_count / elapsed
         all_dets = frame_det.all_detections
         depth_count = sum(1 for d in all_dets if d.distance_source == "depth")
@@ -343,13 +382,22 @@ class AIServer:
 
         logger.info(
             "FPS=%.1f  mode=%s  persons=%d  buf=%d  depth_cov=%.0f%%",
-            fps, cmd.mode.name, len(frame_det.persons), buf_size, depth_coverage,
+            fps,
+            cmd.mode.name,
+            len(frame_det.persons),
+            buf_size,
+            depth_coverage,
         )
 
     def _show_dev_window(self, frame, frame_det, cmd) -> None:
         import cv2
+
         vis = draw_detections(
-            frame, frame_det.persons, frame_det.obstacles, cmd.mode.name, self._state.get_metrics().fps,
+            frame,
+            frame_det.persons,
+            frame_det.obstacles,
+            cmd.mode.name,
+            self._state.get_metrics().fps,
         )
         cv2.imshow("Context-Aware AI [DEV]", vis)
         if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -374,7 +422,7 @@ class AIServer:
 
 def main() -> None:
     args = _parse_args()
-    cfg  = load_config(args.config)
+    cfg = load_config(args.config)
     setup_logging(cfg)
 
     server = AIServer(cfg)

@@ -42,10 +42,14 @@ env/sync.env
 
 # ── Research data (raw runs — large, machine-specific) ────────────────
 # Ignore raw per-run folders (config, env, metrics, artifacts)
-research_data/*/
+data/research_data/*/
 # But DO track the generated aggregate CSVs and README index
-!research_data/aggregated/
-!research_data/README.md
+!data/research_data/aggregated/
+!data/research_data/README.md
 
 # ── Agents ────────────────────────────────────────────────────────────
 .agent/
+
+# ── Dataset ───────────────────────────────────────────────────────────
+data/intent_dataset/
+data/roi_dataset/

@@ -67,7 +67,6 @@ class ZMQSubscriber:
         self._sock = self._ctx.socket(zmq.SUB)
         self._sock.setsockopt(zmq.RCVHWM, 2)
         self._sock.setsockopt(zmq.LINGER, 0)
-        self._sock.setsockopt(zmq.CONFLATE, 1)
         self._sock.setsockopt_string(zmq.SUBSCRIBE, "robot/state")
         self._sock.connect(f"tcp://{self.rasp_pi_ip}:{self.port}")
 
@@ -162,4 +161,19 @@ class ZMQSubscriber:
                 timestamp=msg.timestamp,
             )
         except (ImportError, AttributeError, Exception):
+            import struct
+
+            # Fallback to struct unpack if data is 36 bytes: 7 floats (28 bytes) + 1 double (8 bytes)
+            if len(data) == 36:
+                vx, vy, vtheta, px, py, ptheta, batt, ts = struct.unpack("!7fd", data)
+                return RobotState(
+                    vx=vx,
+                    vy=vy,
+                    vtheta=vtheta,
+                    pos_x=px,
+                    pos_y=py,
+                    battery_percent=batt,
+                    nav2_status="idle",
+                    timestamp=ts,
+                )
             return RobotState()

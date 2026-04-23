@@ -17,6 +17,7 @@ services:
     image: context-aware:jetson-dev
     container_name: context-aware-jetson-dev
     runtime: nvidia
+    network_mode: host
     privileged: true
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
@@ -28,14 +29,6 @@ services:
       - ..:/app
     devices:
       - "/dev/bus/usb:/dev/bus/usb"
-    ports:
-      - "5555:5555"
-      - "5556:5556"
-      - "5560:5560"
-      - "5570:5570"
-      - "50051:50051"
-      - "8080:8080"
-    networks: [robot-net]
     command: /bin/bash
     stdin_open: true
     tty: true
@@ -51,6 +44,7 @@ services:
     image: context-aware:jetson-prod
     container_name: context-aware-prod
     runtime: nvidia
+    network_mode: host
     privileged: true
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
@@ -60,18 +54,12 @@ services:
       - CONFIG_PATH=/app/config/production.yaml
     volumes:
       - ../models:/app/models
+      - ../models/torch_cache:/data/models/torch # Lưu cache model tải từ mạng để không cần tải lại
       - ../logs:/app/logs
+      - ../data:/app/data
       - ../config:/app/config:ro
     devices:
       - "/dev/bus/usb:/dev/bus/usb"
-    ports:
-      - "5555:5555"
-      - "5556:5556"
-      - "5560:5560"
-      - "5570:5570"
-      - "50051:50051"
-      - "8080:8080"
-    networks: [robot-net]
     restart: unless-stopped
     mem_limit: 3g
     memswap_limit: 4g
@@ -86,19 +74,16 @@ services:
   jetson-sync:
     profiles: ["jetson-prod"]
     image: context-aware:jetson-prod   # reuse existing image — no extra build
-    container_name: context-aware-sync
+    network_mode: host
     depends_on:
       - jetson-prod
     env_file:
       - path: ../env/sync.env
         required: false          # skip gracefully if file missing (sync disabled)
-    environment:
-      - SYNC_LOG_DIR=/app/logs/experience
-      - SYNC_SSH_KEY=/root/.ssh/sync_key
     volumes:
       - ../logs:/app/logs                        # shared with jetson-prod
+      - ../data:/app/data                        # datasets
       - ${HOME}/.ssh:/root/.ssh:ro               # SSH keys from Jetson host
-    networks: [robot-net]
     restart: unless-stopped
     command: >
       sh -c '
@@ -118,12 +103,13 @@ services:
     image: context-aware:server
     container_name: context-aware-server
     volumes:
-      - roi-incoming:/data/roi_incoming      # batches từ Jetson
-      - intent-dataset:/data/intent_dataset  # labeled dataset
+      - ../data/roi_dataset:/data/roi_incoming      # batches từ Jetson
+      - ../data/intent_dataset:/data/intent_dataset  # labeled dataset
       - ../models:/workspace/models          # share model weights
       - ../scripts:/workspace/scripts:ro     # share scripts
       - ../src:/workspace/src:ro             # share model definitions
       - ../config:/workspace/config:ro
+      - server-ssh-keys:/root/.ssh           # Giữ vĩnh viễn chìa khóa SSH
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
@@ -145,5 +131,4 @@ services:
               capabilities: [gpu]
 
 volumes:
-  roi-incoming:
-  intent-dataset:
+  server-ssh-keys:

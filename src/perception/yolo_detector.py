@@ -101,6 +101,7 @@ class YOLODetector:
             verbose=False,
             conf=self.conf,
             iou=self.iou,
+            imgsz=self.input_size,
             device=self.device,
         )
 
