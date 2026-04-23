@@ -188,8 +188,18 @@ class HeuristicPolicy:
         heading = self._heading_toward(self._follow_target_id, persons)
         dist = target_person.distance
 
-        # Hard stop tuyệt đối
-        if dist <= self.hard_stop_dist:
+        # --- Fallback khi depth camera trả về 0 (ngoài range, ánh sáng kém...) ---
+        # Dùng bbox height để ước tính khoảng cách thay vì hard stop
+        DEPTH_INVALID_THRESHOLD = 0.15  # < 0.15m coi là invalid (Astra S min range ~0.4m)
+        if dist < DEPTH_INVALID_THRESHOLD:
+            x1, y1, x2, y2 = target_person.bbox
+            bbox_h = max(1, y2 - y1)
+            # Công thức heuristic: người cao ~1.7m, focal length ~525px → dist ≈ 525*1.7/bbox_h
+            dist = float(np.clip(525.0 * 1.7 / bbox_h, 0.3, 5.0))
+            logger.debug("Depth invalid → bbox fallback dist=%.2fm (bbox_h=%dpx)", dist, bbox_h)
+
+        # Hard stop tuyệt đối (chỉ khi depth hợp lệ xác nhận quá gần)
+        if dist <= self.hard_stop_dist and target_person.distance > DEPTH_INVALID_THRESHOLD:
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
 
         # P-Controller: error = dist - target_distance
