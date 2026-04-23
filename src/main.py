@@ -110,6 +110,9 @@ def _build_pipeline(cfg) -> dict:
         follow_velocity=nav_cfg.get("heuristic.follow_velocity", 0.5),
         hard_stop_distance=safe_cfg.get("hard_stop_distance_person", 0.5),
         slow_down_distance=safe_cfg.get("slow_down_distance", 1.0),
+        auto_follow=nav_cfg.get("heuristic.auto_follow", False),
+        follow_target_distance=nav_cfg.get("heuristic.follow_target_distance", 1.2),
+        target_lost_timeout_s=nav_cfg.get("heuristic.target_lost_timeout_s", 2.0),
     )
 
     safety_monitor = SafetyMonitor(

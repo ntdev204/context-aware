@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 
 import numpy as np
 
@@ -41,6 +42,9 @@ class HeuristicPolicy:
         follow_velocity: float = 0.5,
         hard_stop_distance: float = 0.5,  # metres
         slow_down_distance: float = 1.0,
+        auto_follow: bool = False,          # bật tắt chế độ bám người
+        follow_target_distance: float = 1.2, # khoảng cách giữ với target (m)
+        target_lost_timeout_s: float = 2.0,  # giây mất track trước khi giải phóng
     ) -> None:
         self.cruise_threshold = cruise_free_space_threshold
         self.cruise_vel = cruise_velocity
@@ -49,9 +53,13 @@ class HeuristicPolicy:
         self.follow_vel = follow_velocity
         self.hard_stop_dist = hard_stop_distance
         self.slow_down_dist = slow_down_distance
+        self.auto_follow = auto_follow
+        self.follow_target_distance = follow_target_distance
+        self.target_lost_timeout_s = target_lost_timeout_s
 
-        self._follow_target_id: int = -1  # set externally to enable FOLLOW
+        self._follow_target_id: int = -1  # set externally hoặc tự động
         self._observation: np.ndarray | None = None
+        self._target_last_seen: float = 0.0  # timestamp lần cuối thấy target
 
     def set_follow_target(self, track_id: int) -> None:
         """Enable FOLLOW mode for the given track_id (-1 to disable)."""
@@ -103,7 +111,11 @@ class HeuristicPolicy:
             slow = max(self.avoid_vel, self.avoid_vel * (nearest_person_dist / self.slow_down_dist))
             return self._make(NavigationMode.AVOID, slow, avoid_heading, confidence=0.85)
 
-        # RULE 4: FOLLOW mode
+        # RULE 4: AUTO-FOLLOW (bám người tự động)
+        if self.auto_follow:
+            return self._decide_follow(persons)
+
+        # RULE 4b: FOLLOW mode (set thủ công từ ngoài)
         if self._follow_target_id >= 0:
             heading = self._heading_toward(self._follow_target_id, persons)
             return self._make(
@@ -127,6 +139,69 @@ class HeuristicPolicy:
 
         # Default: CRUISE (empty scene)
         return self._make(NavigationMode.CRUISE, self.cruise_vel, 0.0, confidence=0.70)
+
+    def _decide_follow(self, persons: list[DetectionResult]) -> NavigationCommand:
+        """Logic bám người tự động (single-target tracking).
+
+        - Nếu chưa có target: lock vào người gần nhất.
+        - Nếu đã có target: tính hướng và tốc độ hướng tới.
+        - Nếu target bị mất > timeout: giải phóng target, chờ người mới.
+        """
+        now = time.monotonic()
+        active_ids = {p.track_id for p in persons}
+
+        # --- Target đang bị mất ---
+        if self._follow_target_id >= 0 and self._follow_target_id not in active_ids:
+            lost_for = now - self._target_last_seen
+            if lost_for > self.target_lost_timeout_s:
+                logger.info(
+                    "Follow target %d lost for %.1fs — releasing.",
+                    self._follow_target_id,
+                    lost_for,
+                )
+                self._follow_target_id = -1
+            else:
+                # Chờ target quay lại — đứng yên (STOP)
+                return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.90)
+
+        # --- Chưa có target → lock vào người gần nhất ---
+        if self._follow_target_id < 0 and persons:
+            target = min(persons, key=lambda p: p.distance)
+            self._follow_target_id = target.track_id
+            self._target_last_seen = now
+            logger.info("Auto-follow: locked onto track_id=%d", self._follow_target_id)
+
+        # --- Không có ai trong khung hình ---
+        if self._follow_target_id < 0:
+            return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.70)
+
+        # --- Đang theo dõi target ---
+        self._target_last_seen = now
+        target_person = next((p for p in persons if p.track_id == self._follow_target_id), None)
+        if target_person is None:
+            return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.90)
+
+        heading = self._heading_toward(self._follow_target_id, persons)
+
+        # Điều chỉnh tốc độ theo khoảng cách để giữ khoảng cách an toàn
+        dist = target_person.distance
+        if dist <= self.hard_stop_dist:
+            return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
+        elif dist < self.follow_target_distance:
+            # Quá gần → giảm tốc hoặc lùi nhẹ
+            vel = 0.0
+        else:
+            # Tỷ lệ thuận với khoảng cách dư: càng xa càng nhanh, tối đa follow_vel
+            ratio = min((dist - self.follow_target_distance) / 2.0, 1.0)
+            vel = self.follow_vel * ratio
+
+        return self._make(
+            NavigationMode.FOLLOW,
+            vel,
+            heading,
+            confidence=0.88,
+            follow_target_id=self._follow_target_id,
+        )
 
     @staticmethod
     def _make(
