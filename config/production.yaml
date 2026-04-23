@@ -107,8 +107,8 @@ experience:
   roi_batch_size: 5000 # images per archive before sending
   roi_jpeg_quality: 90 # higher = better features for CNN
 
-  # rsync destination — Server Docker container via Tailscale VPN.
-  roi_server_target: "-e 'ssh -p 2222' root@100.93.83.87:/data/roi_incoming/"
+  # rsync destination — Server Docker container via LAN.
+  roi_server_target: "-e 'ssh -p 2222' root@25.12.4.105:/data/roi_incoming/"
 
 api:
   host: "0.0.0.0"
