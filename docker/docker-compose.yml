@@ -16,6 +16,7 @@ services:
       target: jetson-dev
     image: context-aware:jetson-dev
     container_name: context-aware-jetson-dev
+    runtime: nvidia
     network_mode: host
     privileged: true
     environment:
@@ -42,6 +43,7 @@ services:
       target: jetson-prod
     image: context-aware:jetson-prod
     container_name: context-aware-prod
+    runtime: nvidia
     network_mode: host
     privileged: true
     environment:
