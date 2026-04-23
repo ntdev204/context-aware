@@ -11,8 +11,10 @@ from ..perception.roi_extractor import PersonROI
 
 logger = logging.getLogger(__name__)
 
+
 class ROISaver:
     """Saves ROI images asynchronously to avoid blocking main thread."""
+
     def __init__(self, save_dir: str, jpeg_quality: int = 90):
         self.save_dir = Path(save_dir)
         self.jpeg_quality = jpeg_quality
@@ -42,7 +44,7 @@ class ROISaver:
             # Lưu người mới xuất hiện ngay lập tức, hoặc người cũ sau mỗi 15 frames (~2 ảnh/giây)
             if not hasattr(self, "_last_saved"):
                 self._last_saved = {}
-                
+
             last_f = self._last_saved.get(r.track_id, -999)
             if frame_id - last_f >= 15:
                 roi_data.append((r.track_id, r.image.copy()))
@@ -63,7 +65,9 @@ class ROISaver:
                 for track_id, img_array in roi_data:
                     # Tên file gom track_id & frame_id. Đuôi .jpg
                     filepath = self.save_dir / f"roi_t{track_id}_f{frame_id:06d}.jpg"
-                    cv2.imwrite(str(filepath), img_array, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
+                    cv2.imwrite(
+                        str(filepath), img_array, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality]
+                    )
             except queue.Empty:
                 continue
             except Exception as e:

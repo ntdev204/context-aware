@@ -75,7 +75,9 @@ class IntentCNN:
     def load(self) -> None:
         """Load model weights (from .pt file) or build with random heads."""
         if self.model_path is None:
-            logger.info("IntentCNN: No model_path provided. Skipping initialization to save memory.")
+            logger.info(
+                "IntentCNN: No model_path provided. Skipping initialization to save memory."
+            )
             return
 
         import torch
@@ -122,9 +124,11 @@ class IntentCNN:
                 weights=tv_models.MobileNet_V3_Small_Weights.DEFAULT
             )
         except Exception as e:
-            logger.warning("Không có Internet để tải weights gốc (%s). Dùng random weights tạm thời.", e)
+            logger.warning(
+                "Không có Internet để tải weights gốc (%s). Dùng random weights tạm thời.", e
+            )
             backbone = tv_models.mobilenet_v3_small(weights=None)
-            
+
         backbone.classifier = nn.Identity()
 
         self._model = _IntentModel(backbone, feature_dim=576)

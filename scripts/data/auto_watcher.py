@@ -36,23 +36,24 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
-DEFAULT_WATCH_DIR  = "D:/nckh/context-aware/roi_dataset"
+DEFAULT_WATCH_DIR = "D:/nckh/context-aware/roi_dataset"
 DEFAULT_OUTPUT_DIR = "D:/nckh/context-aware/intent_dataset"
-STABLE_WAIT_S      = 5   # Giây chờ sau khi file ngừng tăng kích thước
-                         # (đảm bảo rsync đã xong trước khi xử lý)
+STABLE_WAIT_S = 5  # Giây chờ sau khi file ngừng tăng kích thước
+# (đảm bảo rsync đã xong trước khi xử lý)
 
 
 # ---------------------------------------------------------------------------
 # Processing logic
 # ---------------------------------------------------------------------------
 
+
 def process_archive(
-    archive: Path, 
-    output_dir: Path, 
-    threshold: int, 
+    archive: Path,
+    output_dir: Path,
+    threshold: int,
     lookahead: int,
     auto_train: bool = False,
-    training_cfg: dict | None = None
+    training_cfg: dict | None = None,
 ) -> None:
     """Extract and auto-label one .tar.gz archive, then optionally trigger training pipeline."""
     # Import ở đây để tránh circular import khi test
@@ -73,12 +74,12 @@ def process_archive(
     logger.info("Auto-labeling -> %s", output_dir / "auto")
     try:
         stats = autolabel(
-            input_dir    = extract_dir,
-            output_dir   = output_dir / "auto",
-            threshold_px = threshold,
-            lookahead    = lookahead,
-            min_track_len= 5,
-            move         = True,
+            input_dir=extract_dir,
+            output_dir=output_dir / "auto",
+            threshold_px=threshold,
+            lookahead=lookahead,
+            min_track_len=5,
+            move=True,
         )
     except Exception as exc:
         logger.error("Auto-label failed: %s", exc)
@@ -87,8 +88,16 @@ def process_archive(
     # Log phân phối nhãn
     total = sum(v for k, v in stats.items() if k != "short_track_skipped")
     label_summary = "  ".join(
-        f"{lbl}={stats[lbl]}({stats[lbl]/total*100:.0f}%)" if total else f"{lbl}=0"
-        for lbl in ("STATIONARY", "APPROACHING", "DEPARTING", "CROSSING", "FOLLOWING", "ERRATIC", "uncertain")
+        f"{lbl}={stats[lbl]}({stats[lbl] / total * 100:.0f}%)" if total else f"{lbl}=0"
+        for lbl in (
+            "STATIONARY",
+            "APPROACHING",
+            "DEPARTING",
+            "CROSSING",
+            "FOLLOWING",
+            "ERRATIC",
+            "uncertain",
+        )
     )
     logger.info("Labels: %s  |  skipped_short=%d", label_summary, stats["short_track_skipped"])
 
@@ -102,7 +111,7 @@ def process_archive(
     done_path = archive.with_suffix(".tar.gz.done")
     archive.rename(done_path)
     logger.info("Done: renamed to %s", done_path.name)
-    
+
     if auto_train and training_cfg is not None:
         _run_orchestration_pipeline(output_dir, training_cfg)
 
@@ -110,10 +119,17 @@ def process_archive(
 def _run_orchestration_pipeline(dataset_dir: Path, cfg: dict) -> None:
     """Run explore -> validate -> fine-tune pipeline via subprocesses to avoid CUDA/memory leaks."""
     logger.info("[Orchestrator] ── Pipeline Started ──")
-    
+
     # 1. EXPLORE
     logger.info("[Orchestrator] 1/3: Running Data Exploration...")
-    explore_cmd = [sys.executable, "scripts/data/explore_roi.py", "--dataset", str(dataset_dir), "--output", str(dataset_dir)]
+    explore_cmd = [
+        sys.executable,
+        "scripts/data/explore_roi.py",
+        "--dataset",
+        str(dataset_dir),
+        "--output",
+        str(dataset_dir),
+    ]
     try:
         subprocess.run(explore_cmd, check=True, stdout=subprocess.DEVNULL)
     except subprocess.CalledProcessError as e:
@@ -131,7 +147,7 @@ def _run_orchestration_pipeline(dataset_dir: Path, cfg: dict) -> None:
     logger.info("[Orchestrator] 2/3: Validating Dataset (%s)...", latest_report.name)
     val_cmd = [sys.executable, "scripts/data/validate_dataset.py", str(latest_report)]
     val_result = subprocess.run(val_cmd, capture_output=True, text=True)
-    
+
     for line in val_result.stdout.strip().split("\n"):
         if "❌" in line or "⚠️" in line:
             logger.warning("  %s", line)
@@ -145,22 +161,26 @@ def _run_orchestration_pipeline(dataset_dir: Path, cfg: dict) -> None:
     # 3. FINE-TUNE
     epochs = cfg.get("epochs_per_finetune", 10)
     logger.info("[Orchestrator] 3/3: Fine-tuning (epochs=%d)...", epochs)
-    
+
     model_dir = Path("models/cnn_intent")
     model_dir.mkdir(parents=True, exist_ok=True)
     model_path = model_dir / "intent_v1.pt"
-    
+
     train_cmd = [
-        sys.executable, "scripts/train/train_intent_cnn.py",
-        "--dataset", str(dataset_dir),
-        "--epochs", str(epochs),
-        "--output", str(model_path)
+        sys.executable,
+        "scripts/train/train_intent_cnn.py",
+        "--dataset",
+        str(dataset_dir),
+        "--epochs",
+        str(epochs),
+        "--output",
+        str(model_path),
     ]
-    
+
     if model_path.exists():
         logger.info("  [Hint] Found existing checkpoint -> Continual Training.")
         # Future: append --checkpoint to load previous weights if needed
-        
+
     try:
         # Stream output directly to terminal so user can see progress bar
         subprocess.run(train_cmd, check=True)
@@ -184,9 +204,14 @@ def is_file_stable(path: Path, wait: int = STABLE_WAIT_S) -> bool:
 # Watcher  (dùng watchdog nếu có, fallback polling nếu không)
 # ---------------------------------------------------------------------------
 
+
 def run_with_watchdog(
-    watch_dir: Path, output_dir: Path, threshold: int, lookahead: int,
-    auto_train: bool, training_cfg: dict
+    watch_dir: Path,
+    output_dir: Path,
+    threshold: int,
+    lookahead: int,
+    auto_train: bool,
+    training_cfg: dict,
 ) -> None:
     from watchdog.events import FileSystemEventHandler, FileCreatedEvent
     from watchdog.observers import Observer
@@ -199,7 +224,9 @@ def run_with_watchdog(
             if path.suffix == ".gz" and path.name.endswith(".tar.gz"):
                 logger.info("FileCreated event: %s", path.name)
                 if is_file_stable(path):
-                    process_archive(path, output_dir, threshold, lookahead, auto_train, training_cfg)
+                    process_archive(
+                        path, output_dir, threshold, lookahead, auto_train, training_cfg
+                    )
 
     observer = Observer()
     observer.schedule(BatchHandler(), str(watch_dir), recursive=False)
@@ -215,9 +242,13 @@ def run_with_watchdog(
 
 
 def run_polling(
-    watch_dir: Path, output_dir: Path, threshold: int, lookahead: int,
-    auto_train: bool, training_cfg: dict,
-    poll_interval: int = 10
+    watch_dir: Path,
+    output_dir: Path,
+    threshold: int,
+    lookahead: int,
+    auto_train: bool,
+    training_cfg: dict,
+    poll_interval: int = 10,
 ) -> None:
     """Fallback polling loop (no watchdog dependency)."""
     seen: set[Path] = set()
@@ -226,7 +257,9 @@ def run_polling(
     seen.update(watch_dir.glob("*.tar.gz"))
     seen.update(watch_dir.glob("*.tar.gz.done"))
 
-    logger.info("Polling mode — checking every %ds for new batches in: %s", poll_interval, watch_dir)
+    logger.info(
+        "Polling mode — checking every %ds for new batches in: %s", poll_interval, watch_dir
+    )
 
     try:
         while True:
@@ -235,7 +268,9 @@ def run_polling(
                     seen.add(archive)
                     logger.info("Polling detected: %s", archive.name)
                     if is_file_stable(archive):
-                        process_archive(archive, output_dir, threshold, lookahead, auto_train, training_cfg)
+                        process_archive(
+                            archive, output_dir, threshold, lookahead, auto_train, training_cfg
+                        )
             time.sleep(poll_interval)
     except KeyboardInterrupt:
         logger.info("Watcher stopped by user.")
@@ -245,20 +280,35 @@ def run_polling(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Auto-watcher: monitors roi_dataset/ and labels batches automatically.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--watch",     type=Path, default=DEFAULT_WATCH_DIR,  help="Directory to watch for .tar.gz batches")
-    parser.add_argument("--output",    type=Path, default=DEFAULT_OUTPUT_DIR, help="Output labeled dataset directory")
-    parser.add_argument("--threshold", type=int,  default=30,  help="Pixel shift threshold for LEFT/RIGHT classification")
-    parser.add_argument("--lookahead", type=int,  default=15,  help="Frames ahead to compare cx_px")
-    parser.add_argument("--poll",      action="store_true",    help="Force polling mode (skip watchdog)")
-    parser.add_argument("--interval",  type=int,  default=10,  help="Poll interval in seconds (polling mode only)")
+    parser.add_argument(
+        "--watch",
+        type=Path,
+        default=DEFAULT_WATCH_DIR,
+        help="Directory to watch for .tar.gz batches",
+    )
+    parser.add_argument(
+        "--output", type=Path, default=DEFAULT_OUTPUT_DIR, help="Output labeled dataset directory"
+    )
+    parser.add_argument(
+        "--threshold",
+        type=int,
+        default=30,
+        help="Pixel shift threshold for LEFT/RIGHT classification",
+    )
+    parser.add_argument("--lookahead", type=int, default=15, help="Frames ahead to compare cx_px")
+    parser.add_argument("--poll", action="store_true", help="Force polling mode (skip watchdog)")
+    parser.add_argument(
+        "--interval", type=int, default=10, help="Poll interval in seconds (polling mode only)"
+    )
     args = parser.parse_args()
 
-    watch_dir  = args.watch
+    watch_dir = args.watch
     output_dir = args.output
 
     watch_dir.mkdir(parents=True, exist_ok=True)
@@ -272,12 +322,12 @@ def main() -> None:
     logger.info("ROI Auto-Watcher | watch=%s", watch_dir)
     logger.info("  Output: %s", output_dir)
     logger.info("  Labels: threshold=%dpx  lookahead=%d frames", args.threshold, args.lookahead)
-    
+
     # Load training config
     training_yaml = Path("config/training.yaml")
     training_cfg = {}
     auto_train = False
-    
+
     if training_yaml.exists():
         try:
             with open(training_yaml, "r") as f:
@@ -287,27 +337,40 @@ def main() -> None:
                     auto_train = training_cfg.get("auto_train", False)
         except Exception as e:
             logger.error("Failed to load %s: %s", training_yaml, e)
-            
+
     if auto_train:
         logger.info("  Orchestrator: ENABLED (Explore -> Validate -> Train)")
     else:
         logger.info("  Orchestrator: DISABLED (Extract & Label only)")
-        
+
     logger.info("---")
 
     use_watchdog = False
     if not args.poll:
         try:
             import watchdog  # noqa: F401
+
             use_watchdog = True
             logger.info("Using watchdog (event-driven, low CPU)")
         except ImportError:
-            logger.warning("watchdog not installed — falling back to polling. Install with: pip install watchdog")
+            logger.warning(
+                "watchdog not installed — falling back to polling. Install with: pip install watchdog"
+            )
 
     if use_watchdog:
-        run_with_watchdog(watch_dir, output_dir, args.threshold, args.lookahead, auto_train, training_cfg)
+        run_with_watchdog(
+            watch_dir, output_dir, args.threshold, args.lookahead, auto_train, training_cfg
+        )
     else:
-        run_polling(watch_dir, output_dir, args.threshold, args.lookahead, auto_train, training_cfg, args.interval)
+        run_polling(
+            watch_dir,
+            output_dir,
+            args.threshold,
+            args.lookahead,
+            auto_train,
+            training_cfg,
+            args.interval,
+        )
 
 
 if __name__ == "__main__":

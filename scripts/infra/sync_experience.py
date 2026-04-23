@@ -47,7 +47,8 @@ def rsync_to_target(log_dir: Path, target: str, ssh_key: str | None) -> None:
         "--include=*.h5",
         "--include=*.jpg",
         "--exclude=*",
-        "-e", ssh_cmd,
+        "-e",
+        ssh_cmd,
         f"{log_dir}/",
         f"{target}/",
     ]
@@ -63,7 +64,9 @@ def rsync_to_target(log_dir: Path, target: str, ssh_key: str | None) -> None:
         if result.returncode == 0:
             logger.info("rsync complete. Local files safely removed.")
         else:
-            logger.error("rsync failed (rc=%d):\n%s", result.returncode, result.stderr.strip()[:500])
+            logger.error(
+                "rsync failed (rc=%d):\n%s", result.returncode, result.stderr.strip()[:500]
+            )
     except subprocess.TimeoutExpired:
         logger.error("rsync timed out after 300s — check network.")
     except FileNotFoundError:
@@ -72,7 +75,9 @@ def rsync_to_target(log_dir: Path, target: str, ssh_key: str | None) -> None:
 
 def run_daemon(log_dir: Path, target: str, interval: float, ssh_key: str | None) -> None:
     """Run sync loop indefinitely."""
-    logger.info("Sync daemon started | dir=%s | target=%s | interval=%.0fs", log_dir, target, interval)
+    logger.info(
+        "Sync daemon started | dir=%s | target=%s | interval=%.0fs", log_dir, target, interval
+    )
     while True:
         try:
             rsync_to_target(log_dir, target, ssh_key)
@@ -84,10 +89,14 @@ def run_daemon(log_dir: Path, target: str, interval: float, ssh_key: str | None)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sync HDF5/JPG files from Jetson to server.")
-    parser.add_argument("--log-dir", default=os.getenv("SYNC_LOG_DIR", "logs/experience"), help="Local sync dir")
+    parser.add_argument(
+        "--log-dir", default=os.getenv("SYNC_LOG_DIR", "logs/experience"), help="Local sync dir"
+    )
     parser.add_argument("--target", default=os.getenv("SYNC_TARGET"), help="rsync destination")
     parser.add_argument("--interval", type=float, default=float(os.getenv("SYNC_INTERVAL", "30")))
-    parser.add_argument("--ssh-key", default=os.getenv("SYNC_SSH_KEY", str(Path.home() / ".ssh" / "sync_key")))
+    parser.add_argument(
+        "--ssh-key", default=os.getenv("SYNC_SSH_KEY", str(Path.home() / ".ssh" / "sync_key"))
+    )
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--log-level", default="INFO")
 
@@ -107,6 +116,7 @@ def main() -> None:
         rsync_to_target(log_dir, args.target, ssh_key)
     else:
         run_daemon(log_dir, args.target, args.interval, ssh_key)
+
 
 if __name__ == "__main__":
     main()

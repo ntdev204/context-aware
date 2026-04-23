@@ -100,7 +100,7 @@ def create_app(state: ServerState) -> FastAPI:
                 if frame and frame != last_frame:
                     yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
                     last_frame = frame
-                
+
                 # Giới hạn tốc độ Stream tối đa 15 FPS để phù hợp mạng di động (chống giật/delay)
                 time.sleep(0.066)
 

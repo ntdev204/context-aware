@@ -121,6 +121,7 @@ class ZMQPublisher:
           - safety_override: uint8
         """
         import struct
+
         return struct.pack(
             "!iffiffB",
             int(cmd.mode),
