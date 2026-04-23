@@ -108,10 +108,12 @@ def _build_pipeline(cfg) -> dict:
         cautious_velocity=nav_cfg.get("heuristic.cautious_velocity", 0.6),
         avoid_velocity=nav_cfg.get("heuristic.avoid_velocity", 0.3),
         follow_velocity=nav_cfg.get("heuristic.follow_velocity", 0.5),
-        hard_stop_distance=safe_cfg.get("hard_stop_distance_person", 0.5),
+        hard_stop_distance=safe_cfg.get("hard_stop_distance_person", 0.3),
         slow_down_distance=safe_cfg.get("slow_down_distance", 1.0),
         auto_follow=nav_cfg.get("heuristic.auto_follow", False),
-        follow_target_distance=nav_cfg.get("heuristic.follow_target_distance", 1.2),
+        follow_target_distance=nav_cfg.get("heuristic.follow_target_distance", 0.5),
+        follow_deadband=nav_cfg.get("heuristic.follow_deadband", 0.08),
+        follow_kp=nav_cfg.get("heuristic.follow_kp", 1.0),
         target_lost_timeout_s=nav_cfg.get("heuristic.target_lost_timeout_s", 2.0),
     )
 

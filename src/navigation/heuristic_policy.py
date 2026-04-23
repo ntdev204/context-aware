@@ -40,11 +40,13 @@ class HeuristicPolicy:
         cautious_velocity: float = 0.6,
         avoid_velocity: float = 0.3,
         follow_velocity: float = 0.5,
-        hard_stop_distance: float = 0.5,  # metres
+        hard_stop_distance: float = 0.3,
         slow_down_distance: float = 1.0,
-        auto_follow: bool = False,          # bật tắt chế độ bám người
-        follow_target_distance: float = 1.2, # khoảng cách giữ với target (m)
-        target_lost_timeout_s: float = 2.0,  # giây mất track trước khi giải phóng
+        auto_follow: bool = False,
+        follow_target_distance: float = 0.5,
+        follow_deadband: float = 0.08,
+        follow_kp: float = 1.0,
+        target_lost_timeout_s: float = 2.0,
     ) -> None:
         self.cruise_threshold = cruise_free_space_threshold
         self.cruise_vel = cruise_velocity
@@ -55,11 +57,13 @@ class HeuristicPolicy:
         self.slow_down_dist = slow_down_distance
         self.auto_follow = auto_follow
         self.follow_target_distance = follow_target_distance
+        self.follow_deadband = follow_deadband
+        self.follow_kp = follow_kp
         self.target_lost_timeout_s = target_lost_timeout_s
 
-        self._follow_target_id: int = -1  # set externally hoặc tự động
+        self._follow_target_id: int = -1
         self._observation: np.ndarray | None = None
-        self._target_last_seen: float = 0.0  # timestamp lần cuối thấy target
+        self._target_last_seen: float = 0.0
 
     def set_follow_target(self, track_id: int) -> None:
         """Enable FOLLOW mode for the given track_id (-1 to disable)."""
@@ -182,18 +186,20 @@ class HeuristicPolicy:
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.90)
 
         heading = self._heading_toward(self._follow_target_id, persons)
-
-        # Điều chỉnh tốc độ theo khoảng cách để giữ khoảng cách an toàn
         dist = target_person.distance
+
+        # Hard stop tuyệt đối
         if dist <= self.hard_stop_dist:
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
-        elif dist < self.follow_target_distance:
-            # Quá gần → giảm tốc hoặc lùi nhẹ
-            vel = 0.0
+
+        # P-Controller: error = dist - target_distance
+        #   error > 0 (quá xa)  → vel dương → tiến
+        #   error < 0 (quá gần) → vel âm   → lùi
+        error = dist - self.follow_target_distance
+        if abs(error) < self.follow_deadband:
+            vel = 0.0  # dead-band: đứng yên, tránh rung lắc
         else:
-            # Tỷ lệ thuận với khoảng cách dư: càng xa càng nhanh, tối đa follow_vel
-            ratio = min((dist - self.follow_target_distance) / 2.0, 1.0)
-            vel = self.follow_vel * ratio
+            vel = float(np.clip(self.follow_kp * error, -self.follow_vel, self.follow_vel))
 
         return self._make(
             NavigationMode.FOLLOW,

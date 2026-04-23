@@ -72,12 +72,14 @@ navigation:
     avoid_velocity: 0.3
     follow_velocity: 0.5
     # --- Bám người tự động ---
-    auto_follow: true          # true = bật chế độ bám người; false = hành vi cũ
-    follow_target_distance: 1.2  # giữ khoảng cách 1.2m với target
+    auto_follow: true            # true = bật chế độ bám người; false = hành vi cũ
+    follow_target_distance: 0.5  # giữ khoảng cách 0.5m với target
+    follow_deadband: 0.08        # ±0.08m: không điều chỉnh nếu sai số nhỏ hơn ngưỡng này
+    follow_kp: 1.0               # hệ số P-controller (tăng = phản ứng nhanh hơn)
     target_lost_timeout_s: 2.0   # giải phóng target nếu mất track > 2 giây
 
   safety:
-    hard_stop_distance_person: 0.5
+    hard_stop_distance_person: 0.3
     hard_stop_distance_obstacle: 0.3
     slow_down_distance: 1.0
     slow_down_factor: 0.5
