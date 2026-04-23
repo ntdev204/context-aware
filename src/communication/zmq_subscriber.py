@@ -67,7 +67,6 @@ class ZMQSubscriber:
         self._sock = self._ctx.socket(zmq.SUB)
         self._sock.setsockopt(zmq.RCVHWM, 2)
         self._sock.setsockopt(zmq.LINGER, 0)
-        self._sock.setsockopt(zmq.CONFLATE, 1)
         self._sock.setsockopt_string(zmq.SUBSCRIBE, "robot/state")
         self._sock.connect(f"tcp://{self.rasp_pi_ip}:{self.port}")
 
