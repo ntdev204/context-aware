@@ -27,9 +27,9 @@ class SafetyMonitor:
 
     def __init__(
         self,
-        hard_stop_person: float = 0.5,
+        hard_stop_person: float = 2.0,
         hard_stop_obstacle: float = 0.3,
-        slow_down_distance: float = 1.0,
+        slow_down_distance: float = 3.0,
         slow_down_factor: float = 0.5,
         watchdog_timeout_ms: float = 500.0,
         battery_threshold: float = 10.0,

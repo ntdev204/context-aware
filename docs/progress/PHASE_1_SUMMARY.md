@@ -22,14 +22,14 @@
 
 - **Tracking Ổn định:** Phục hồi và kích hoạt thành công thuật toán ByteTrack. Đảm bảo gán `track_id` ổn định qua từng frame.
 - **Bổ sung Fallback cho Depth Camera:** Sửa lỗi `depth_cov=0%` (khi đối tượng quá gần hoặc ánh sáng yếu) gây kích hoạt nhầm Hard Stop. Áp dụng công thức ước lượng khoảng cách dự phòng bằng chiều cao Bounding Box của YOLO (`dist ≈ (focal_length × 1.7) / bbox_h`).
-- **Nâng cấp Heuristic P-Controller:** Điều chỉnh giới hạn `velocity_scale` sang dải `[-1, 1]` và cho phép xuất vận tốc âm. Robot hiện tại có thể lùi về phía sau để giữ cự ly `0.5m` mục tiêu.
+- **Nâng cấp Heuristic P-Controller:** Điều chỉnh giới hạn `velocity_scale` sang dải `[-1, 1]` và cho phép xuất vận tốc âm. Robot hiện tại có thể lùi về phía sau để giữ cự ly `2.0m` mục tiêu.
 - **Normalise Occupancy Grid:** Fix lỗi vỡ giá trị lưới chiếm dụng. Đảm bảo biểu diễn vật cản dưới góc nhìn ma trận cho State RL.
 - **COCO Class Context Mapping:** Trực tiếp cấu hình thuật toán Mapping phân tích đối tượng từ YOLO 80-class tiêu chuẩn đổ về các nhóm chuyên biệt theo thực tế kho bãi/sân bay. Chỉ giữ lại xử lý `person`, `dynamic_hazard` (balo, vali, bóng bay), và `static_obstacle` (ghế băng, bàn, tv).
 
 ### 4. Luồng dữ liệu HDF5 (Experience Streamer)
 
 - **Bug-fix HDF5 Segmentation Fault:** Xử lý tận gốc cơ chế `h5py` Garbage Collection làm sụp bộ nhớ. Vô hiệu hóa `gc` cục bộ trong block lưu file, khóa lock luồng an toàn giúp Jetson lưu dữ liệu 102 chiều vào `.h5` mượt mà không crash.
-- **Safety Policy:** Đã thiết lập Heuristic fallback để làm mồi nhử lái robot lấy Data. Test chặn được robot (Hard stop) khi nhận thấy người < 0.5m.
+- **Safety Policy:** Đã thiết lập Heuristic fallback để làm mồi nhử lái robot lấy Data. Test chặn được robot (Hard stop) khi nhận thấy người < 2.0m.
 
 ---
 
