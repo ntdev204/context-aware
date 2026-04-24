@@ -67,9 +67,9 @@ navigation:
     follow_velocity: 0.5
 
   safety:
-    hard_stop_distance_person: 0.5
+    hard_stop_distance_person: 2.0
     hard_stop_distance_obstacle: 0.3
-    slow_down_distance: 1.0
+    slow_down_distance: 3.0
     slow_down_factor: 0.5
     watchdog_timeout_ms: 500
     watchdog_log_interval_s: 5.0
