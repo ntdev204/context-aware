@@ -84,24 +84,19 @@ class HeuristicPolicy:
 
         intent_map = {p.track_id: p for p in intent_preds}
 
-        # Extract distances from observation vector (de-normalised)
-        nearest_person_dist = float(observation[1]) * 5.0  # de-normalised
+        nearest_person_dist = float(observation[1]) * 5.0
         nearest_obstacle_dist = float(observation[3]) * 5.0
 
-        # RULE 1: Hard stop for proximity
-        min(nearest_person_dist, nearest_obstacle_dist)
         if persons and nearest_person_dist < self.hard_stop_dist:
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
         if obstacles and nearest_obstacle_dist < 0.3:
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
 
-        # RULE 2: ERRATIC intent → STOP
         for pred in intent_preds:
             if pred.intent_class == ERRATIC and pred.confidence > 0.6:
                 logger.warning("ERRATIC intent detected (track=%d)", pred.track_id)
                 return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.95)
 
-        # RULE 3: CROSSING / APPROACHING → AVOID
         avoid_heading = 0.0
         blocking = False
         for person in persons:
@@ -115,11 +110,9 @@ class HeuristicPolicy:
             slow = max(self.avoid_vel, self.avoid_vel * (nearest_person_dist / self.slow_down_dist))
             return self._make(NavigationMode.AVOID, slow, avoid_heading, confidence=0.85)
 
-        # RULE 4: AUTO-FOLLOW (bám người tự động)
         if self.auto_follow:
             return self._decide_follow(persons)
 
-        # RULE 4b: FOLLOW mode (set thủ công từ ngoài)
         if self._follow_target_id >= 0:
             heading = self._heading_toward(self._follow_target_id, persons)
             return self._make(
@@ -130,31 +123,22 @@ class HeuristicPolicy:
                 follow_target_id=self._follow_target_id,
             )
 
-        # RULE 5: Open space → CRUISE
         if free_ratio >= self.cruise_threshold and not persons:
             return self._make(NavigationMode.CRUISE, self.cruise_vel, 0.0, confidence=0.90)
 
-        # RULE 6: Persons present but not blocking → CAUTIOUS
         if persons:
             vel = self.cautious_vel
             if nearest_person_dist < self.slow_down_dist:
                 vel *= nearest_person_dist / self.slow_down_dist
             return self._make(NavigationMode.CAUTIOUS, vel, 0.0, confidence=0.75)
 
-        # Default: CRUISE (empty scene)
         return self._make(NavigationMode.CRUISE, self.cruise_vel, 0.0, confidence=0.70)
 
     def _decide_follow(self, persons: list[DetectionResult]) -> NavigationCommand:
-        """Logic bám người tự động (single-target tracking).
-
-        - Nếu chưa có target: lock vào người gần nhất.
-        - Nếu đã có target: tính hướng và tốc độ hướng tới.
-        - Nếu target bị mất > timeout: giải phóng target, chờ người mới.
-        """
+        """Automatic person following logic with single-target tracking."""
         now = time.monotonic()
         active_ids = {p.track_id for p in persons}
 
-        # --- Target đang bị mất ---
         if self._follow_target_id >= 0 and self._follow_target_id not in active_ids:
             lost_for = now - self._target_last_seen
             if lost_for > self.target_lost_timeout_s:
@@ -165,21 +149,17 @@ class HeuristicPolicy:
                 )
                 self._follow_target_id = -1
             else:
-                # Chờ target quay lại — đứng yên (STOP)
                 return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.90)
 
-        # --- Chưa có target → lock vào người gần nhất ---
         if self._follow_target_id < 0 and persons:
             target = min(persons, key=lambda p: p.distance)
             self._follow_target_id = target.track_id
             self._target_last_seen = now
             logger.info("Auto-follow: locked onto track_id=%d", self._follow_target_id)
 
-        # --- Không có ai trong khung hình ---
         if self._follow_target_id < 0:
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.70)
 
-        # --- Đang theo dõi target ---
         self._target_last_seen = now
         target_person = next((p for p in persons if p.track_id == self._follow_target_id), None)
         if target_person is None:
@@ -188,26 +168,19 @@ class HeuristicPolicy:
         heading = self._heading_toward(self._follow_target_id, persons)
         dist = target_person.distance
 
-        # --- Fallback khi depth camera trả về 0 (ngoài range, ánh sáng kém...) ---
-        # Dùng bbox height để ước tính khoảng cách thay vì hard stop
-        DEPTH_INVALID_THRESHOLD = 0.15  # < 0.15m coi là invalid (Astra S min range ~0.4m)
+        DEPTH_INVALID_THRESHOLD = 0.15
         if dist < DEPTH_INVALID_THRESHOLD:
             x1, y1, x2, y2 = target_person.bbox
             bbox_h = max(1, y2 - y1)
-            # Công thức heuristic: người cao ~1.7m, focal length ~525px → dist ≈ 525*1.7/bbox_h
             dist = float(np.clip(525.0 * 1.7 / bbox_h, 0.3, 5.0))
-            logger.debug("Depth invalid → bbox fallback dist=%.2fm (bbox_h=%dpx)", dist, bbox_h)
+            logger.debug("Depth invalid, using bbox fallback: dist=%.2fm", dist)
 
-        # Hard stop tuyệt đối (chỉ khi depth hợp lệ xác nhận quá gần)
         if dist <= self.hard_stop_dist and target_person.distance > DEPTH_INVALID_THRESHOLD:
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
 
-        # P-Controller: error = dist - target_distance
-        #   error > 0 (quá xa)  → vel dương → tiến
-        #   error < 0 (quá gần) → vel âm   → lùi
         error = dist - self.follow_target_distance
         if abs(error) < self.follow_deadband:
-            vel = 0.0  # dead-band: đứng yên, tránh rung lắc
+            vel = 0.0
         else:
             vel = float(np.clip(self.follow_kp * error, -self.follow_vel, self.follow_vel))
 

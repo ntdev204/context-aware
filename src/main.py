@@ -203,11 +203,9 @@ class AIServer:
         c = self._components
         logger.info("Context-Aware AI Server starting")
 
-        # Load CUDA libs on main thread before spawning threads.
         c["yolo"].load()
         c["intent_cnn"].load()
 
-        # HDF5 writer only started when explicitly enabled.
         if c["exp_buffer"] is not None:
             c["exp_buffer"].start()
         if c["roi_saver"] is not None:
@@ -307,7 +305,6 @@ class AIServer:
 
             robot_state = c["subscriber"].get_latest_state()
 
-            # HDF5 path — only active when hdf5_enabled: true in config.
             if exp_col is not None:
                 exp_col.collect(
                     raw_frame=frame,
@@ -317,8 +314,6 @@ class AIServer:
                     cmd=cmd,
                     robot_state=robot_state,
                 )
-
-            # ROI saver path — active when hdf5_enabled: false
             elif c["roi_saver"] is not None and len(rois) > 0:
                 c["roi_saver"].push(rois, frame_id)
 

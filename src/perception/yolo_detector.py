@@ -158,7 +158,7 @@ class YOLODetector:
 
         for box in boxes:
             cls_id = int(box.cls[0])
-            raw_name = results[0].names[cls_id]  # Lấy tên gốc của class từ weights
+            raw_name = results[0].names[cls_id]
             class_name = self._map_to_nav_class(raw_name)
 
             if class_name == "ignore":
@@ -175,9 +175,7 @@ class YOLODetector:
             )
 
             # Depth-first distance estimation
-            det.distance, det.distance_source = self._estimate_distance(
-                x1, y1, x2, y2, h, w, class_name, depth_frame
-            )
+            det.distance, det.distance_source = self._estimate_distance(x1, y1, x2, y2, h, w, class_name, depth_frame)
 
             frame_det.all_detections.append(det)
 
@@ -196,21 +194,16 @@ class YOLODetector:
     @staticmethod
     def _map_to_nav_class(raw_name: str) -> str:
         """Map raw YOLO class name (COCO or Custom) into Robot Navigation class."""
-        # 1. Nếu đang dùng Model Custom (đã có sẵn các chữ chuẩn)
         if raw_name in CLASS_NAMES:
             return raw_name
 
-        # 2. Nếu đang dùng Model COCO 80 Class (Chưa train)
         if raw_name == "person":
             return "person"
 
-        # Nhóm đồ có thể chuyển động, bị ném/trượt, hoặc kéo đi (hành lý, thùng)
-        # Balo, vali, túi xách thường là hành lý sân bay. Quả bóng đại diện cho vật thể ném.
         dynamic_keywords = {"sports ball", "frisbee", "backpack", "suitcase", "handbag", "umbrella"}
         if raw_name in dynamic_keywords:
             return "dynamic_hazard"
 
-        # Nhóm vật cản tĩnh (ghế chờ, bàn, cây cảnh)
         static_keywords = {
             "bench",
             "chair",
@@ -223,7 +216,6 @@ class YOLODetector:
         if raw_name in static_keywords:
             return "static_obstacle"
 
-        # Vụng vặt không cản đường (ly, chén, nĩa, sách) thì bỏ qua
         return "ignore"
 
     @staticmethod
@@ -256,17 +248,13 @@ class YOLODetector:
 
             roi = depth_frame[r0:r1, c0:c1].astype(np.float32)
 
-            # Keep only pixels within Astra S valid range
             valid_mask = (roi >= _DEPTH_MIN_MM) & (roi <= _DEPTH_MAX_MM)
             valid_pixels = int(np.count_nonzero(valid_mask))
 
             if valid_pixels >= _DEPTH_MIN_VALID_PIXELS:
-                # Median of valid pixels, convert mm → metres
                 depth_m = float(np.median(roi[valid_mask])) / 1000.0
                 return round(depth_m, 3), "depth"
 
-        # Bbox heuristic fallback
-        # k_factor is empirical: person ~1.7m tall, obstacle ~0.6m
         bbox_height = max(1, y2 - y1)
         k_factor = 1.5 if class_name == "person" else 0.5
         dist_m = max(0.2, k_factor * frame_h / bbox_height)

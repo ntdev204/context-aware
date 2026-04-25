@@ -104,15 +104,10 @@ class ContextBuilder:
         return self.get_stacked_observation()
 
     def get_stacked_observation(self) -> np.ndarray:
-        """Return concatenated observation history.
-
-        When deque is not yet full, pad with zeros (cold-start).
-        k=1 ⟹ shape (104,); k=3 ⟹ shape (312,).
-        """
+        """Return concatenated observation history."""
         if len(self._history) == 0:
             return np.zeros(OBS_DIM * self.temporal_stack_size, dtype=np.float32)
 
-        # Pad missing frames with the oldest available snapshot
         pad_with = self._history[0]
         padding_needed = self.temporal_stack_size - len(self._history)
         pads = [pad_with] * padding_needed
@@ -173,7 +168,6 @@ class ContextBuilder:
                 obs[base : base + 6] = pred.probabilities
                 obs[base + 6] = pred.dx
                 obs[base + 7] = pred.dy
-            # else: zeros (person not predicted, track_id mismatch)
 
         # -- Robot state [94:97] ------------------------------------
         rs = self._robot_state
@@ -187,8 +181,7 @@ class ContextBuilder:
             obs[98] = self._prev_action.heading_offset / (math.pi / 4)
             mode_oh = np.zeros(NUM_MODES, dtype=np.float32)
             mode_oh[int(self._prev_action.mode)] = 1.0
-            obs[99:104] = mode_oh  # all 5 modes fit in 5 slots
-        # else: zeros
+            obs[99:104] = mode_oh
 
         return obs
 
@@ -206,7 +199,6 @@ class ContextBuilder:
             x1, y1, x2, y2 = det.bbox
             cx = (x1 + x2) / 2.0
             cy = (y1 + y2) / 2.0
-            # Normalize pixel coordinates to [0, 1] before mapping to grid
             cx_norm = cx / fw
             cy_norm = cy / fh
             gx = min(self.grid_size - 1, int(cx_norm * self.grid_size))

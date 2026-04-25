@@ -102,7 +102,6 @@ class IntentCNN:
             self._model = self._model.to(dtype=self._dtype, device=self._torch_device)
             self._model.eval()
 
-        # 2. Khởi chạy daemon thread xử lý ngầm intent
         self._running = True
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
@@ -124,9 +123,7 @@ class IntentCNN:
                 weights=tv_models.MobileNet_V3_Small_Weights.DEFAULT
             )
         except Exception as e:
-            logger.warning(
-                "Không có Internet để tải weights gốc (%s). Dùng random weights tạm thời.", e
-            )
+            logger.warning("Failed to load pretrained weights (%s). Using random weights.", e)
             backbone = tv_models.mobilenet_v3_small(weights=None)
 
         backbone.classifier = nn.Identity()
@@ -146,11 +143,7 @@ class IntentCNN:
         self._build_model()
 
         if not os.path.isfile(path):
-            logger.warning(
-                "IntentCNN: weights file '%s' not found -- using random weights. "
-                "Run training to create this file.",
-                path,
-            )
+            logger.warning("IntentCNN: weights file '%s' not found -- using random weights", path)
             return
 
         state = torch.load(path, map_location=self._torch_device)
@@ -164,18 +157,15 @@ class IntentCNN:
         if not rois:
             return []
 
-        # Đẩy ROIs mới nhất vào hàng đợi (overwrite cũ)
         with self._lock:
             self._rois_queue = rois
 
-        # Trả về kết quả từ cache ngay lập tức để không block main thread
         predictions = []
         with self._lock:
             for r in rois:
                 if r.track_id in self._cache:
                     predictions.append(self._cache[r.track_id])
                 else:
-                    # Default khởi tạo tránh bị văng lỗi ở các module quy trình sau
                     predictions.append(
                         IntentPrediction(
                             track_id=r.track_id,
@@ -217,10 +207,8 @@ class IntentCNN:
             elapsed_ms = (time.monotonic() - t0) * 1000
             per_ms = elapsed_ms / len(rois)
 
-            # Cập nhật kết quả vào cache
             with self._lock:
                 for i, roi in enumerate(rois):
-                    # Chỉ cache đối tượng đã có track_id xác định
                     if roi.track_id == -1:
                         continue
                     probs = intent_probs[i]
@@ -236,7 +224,6 @@ class IntentCNN:
                         inference_ms=per_ms,
                     )
 
-                # Dọn dẹp cache cho các track_id không còn xuất hiện
                 active_ids = {r.track_id for r in rois}
                 dead_ids = [tid for tid in self._cache.keys() if tid not in active_ids]
                 for tid in dead_ids:
