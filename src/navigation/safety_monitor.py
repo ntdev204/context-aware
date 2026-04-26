@@ -34,6 +34,7 @@ class SafetyMonitor:
         watchdog_timeout_ms: float = 500.0,
         battery_threshold: float = 10.0,
         watchdog_log_interval_s: float = 5.0,
+        follow_min_distance: float = 0.5,
     ) -> None:
         self.hard_stop_person = hard_stop_person
         self.hard_stop_obstacle = hard_stop_obstacle
@@ -42,6 +43,8 @@ class SafetyMonitor:
         self.watchdog_timeout_ms = watchdog_timeout_ms
         self.battery_threshold = battery_threshold
         self.watchdog_log_interval_s = watchdog_log_interval_s
+        # Ngưỡng emergency stop thực sự trong follow mode (cho phép robot lùi khi người ở giữa)
+        self.follow_min_distance = follow_min_distance
 
         self._last_robot_state_ts: float = time.monotonic()
         self._last_watchdog_log_ts: float = 0.0
@@ -77,9 +80,17 @@ class SafetyMonitor:
         nearest_person_dist = self._nearest_person_dist(frame_det)
         nearest_obstacle_dist = self._nearest_obstacle_dist(frame_det)
 
-        # Hard stop: person too close
-        if frame_det.persons and nearest_person_dist < self.hard_stop_person:
-            logger.info("Safety STOP: person at %.2f m", nearest_person_dist)
+        # Hard stop: person too close.
+        # Exception: nếu robot đang lùi (vel âm) để thoát ra xa — cho phép, chỉ dừng khi quá gần.
+        is_reversing = cmd.velocity_scale < 0
+        effective_stop_dist = self.follow_min_distance if is_reversing else self.hard_stop_person
+        if frame_det.persons and nearest_person_dist < effective_stop_dist:
+            logger.info(
+                "Safety STOP: person at %.2f m (threshold=%.2f, reversing=%s)",
+                nearest_person_dist,
+                effective_stop_dist,
+                is_reversing,
+            )
             return self._emergency_stop(cmd, "person_proximity")
 
         # Hard stop: obstacle too close
@@ -95,8 +106,8 @@ class SafetyMonitor:
                 )
                 return self._emergency_stop(cmd, "erratic_intent")
 
-        # Slow-down zone (proportional reduction)
-        if frame_det.persons and nearest_person_dist < self.slow_down_distance:
+        # Slow-down zone (proportional reduction) — chỉ ảnh hưởng forward velocity
+        if frame_det.persons and nearest_person_dist < self.slow_down_distance and not is_reversing:
             factor = nearest_person_dist / self.slow_down_distance * self.slow_down_factor
             if cmd.velocity_scale > factor:
                 cmd.velocity_scale = factor
