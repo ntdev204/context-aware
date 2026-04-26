@@ -77,7 +77,7 @@ navigation:
     follow_target_distance: 2.0  # giữ khoảng cách 2m với target
     follow_deadband: 0.08        # ±0.08m: không điều chỉnh nếu sai số nhỏ hơn ngưỡng này
     follow_kp: 1.0               # hệ số P-controller (tăng = phản ứng nhanh hơn)
-    target_lost_timeout_s: 2.0   # giải phóng target nếu mất track > 2 giây
+    target_lost_timeout_s: 300.0 # giải phóng target nếu mất track > 5 phút (300 giây)
     follow_min_distance: 0.5     # khoảng cách tối thiểu tuyệt đối — STOP nếu người < 0.5m (cho phép lùi trong [0.5m, 2.0m])
 
   safety:

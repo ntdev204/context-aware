@@ -47,7 +47,7 @@ class HeuristicPolicy:
         follow_target_distance: float = 2.0,
         follow_deadband: float = 0.08,
         follow_kp: float = 1.0,
-        target_lost_timeout_s: float = 2.0,
+        target_lost_timeout_s: float = 300.0,
         follow_min_distance: float = 0.5,
     ) -> None:
         self.cruise_threshold = cruise_free_space_threshold
