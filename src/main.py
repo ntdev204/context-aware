@@ -107,7 +107,8 @@ def _build_pipeline(cfg) -> dict:
         cruise_velocity=nav_cfg.get("heuristic.cruise_velocity", 1.0),
         cautious_velocity=nav_cfg.get("heuristic.cautious_velocity", 0.6),
         avoid_velocity=nav_cfg.get("heuristic.avoid_velocity", 0.3),
-        follow_velocity=nav_cfg.get("heuristic.follow_velocity", 0.5),
+        follow_max_vel=nav_cfg.get("heuristic.follow_max_vel", 0.8),
+        follow_min_vel=nav_cfg.get("heuristic.follow_min_vel", 0.3),
         hard_stop_distance=safe_cfg.get("hard_stop_distance_person", 2.0),
         slow_down_distance=safe_cfg.get("slow_down_distance", 3.0),
         auto_follow=nav_cfg.get("heuristic.auto_follow", False),
@@ -115,6 +116,7 @@ def _build_pipeline(cfg) -> dict:
         follow_deadband=nav_cfg.get("heuristic.follow_deadband", 0.08),
         follow_kp=nav_cfg.get("heuristic.follow_kp", 1.0),
         target_lost_timeout_s=nav_cfg.get("heuristic.target_lost_timeout_s", 2.0),
+        follow_min_distance=nav_cfg.get("heuristic.follow_min_distance", 0.5),
     )
 
     safety_monitor = SafetyMonitor(
@@ -125,6 +127,7 @@ def _build_pipeline(cfg) -> dict:
         watchdog_timeout_ms=safe_cfg.get("watchdog_timeout_ms", 500.0),
         battery_threshold=safe_cfg.get("battery_threshold_pct", 10.0),
         watchdog_log_interval_s=safe_cfg.get("watchdog_log_interval_s", 5.0),
+        follow_min_distance=nav_cfg.get("heuristic.follow_min_distance", 0.5),
     )
 
     publisher = ZMQPublisher(
