@@ -93,6 +93,14 @@ class HeuristicPolicy:
         nearest_person_dist = float(observation[1]) * 5.0
         nearest_obstacle_dist = float(observation[3]) * 5.0
 
+        # Trong follow mode: delegate NGAY cho _decide_follow() — nó tự xử lý emergency stop
+        # tại follow_min_distance (0.5m). KHÔNG dùng hard_stop_dist (2.0m) ở đây vì sẽ
+        # chặn lệnh lùi ra xa khi người đứng trong khoảng (0.5m, 2.0m).
+        if self.auto_follow:
+            if obstacles and nearest_obstacle_dist < 0.3:
+                return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
+            return self._decide_follow(persons, free_ratio, intent_map)
+
         if persons and nearest_person_dist < self.hard_stop_dist:
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
         if obstacles and nearest_obstacle_dist < 0.3:
@@ -115,9 +123,6 @@ class HeuristicPolicy:
         if blocking:
             slow = max(self.avoid_vel, self.avoid_vel * (nearest_person_dist / self.slow_down_dist))
             return self._make(NavigationMode.AVOID, slow, avoid_heading, confidence=0.85)
-
-        if self.auto_follow:
-            return self._decide_follow(persons, free_ratio, intent_map)
 
         if self._follow_target_id >= 0:
             heading = self._heading_toward(self._follow_target_id, persons)
