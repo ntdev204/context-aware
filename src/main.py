@@ -115,7 +115,7 @@ def _build_pipeline(cfg) -> dict:
         follow_target_distance=nav_cfg.get("heuristic.follow_target_distance", 2.0),
         follow_deadband=nav_cfg.get("heuristic.follow_deadband", 0.08),
         follow_kp=nav_cfg.get("heuristic.follow_kp", 1.0),
-        target_lost_timeout_s=nav_cfg.get("heuristic.target_lost_timeout_s", 2.0),
+        target_lost_timeout_s=nav_cfg.get("heuristic.target_lost_timeout_s", 300.0),
         follow_min_distance=nav_cfg.get("heuristic.follow_min_distance", 0.5),
     )
 
