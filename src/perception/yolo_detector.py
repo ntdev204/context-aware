@@ -175,7 +175,9 @@ class YOLODetector:
             )
 
             # Depth-first distance estimation
-            det.distance, det.distance_source = self._estimate_distance(x1, y1, x2, y2, h, w, class_name, depth_frame)
+            det.distance, det.distance_source = self._estimate_distance(
+                x1, y1, x2, y2, h, w, class_name, depth_frame
+            )
 
             frame_det.all_detections.append(det)
 
