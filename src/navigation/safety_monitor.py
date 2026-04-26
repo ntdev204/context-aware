@@ -137,7 +137,19 @@ class SafetyMonitor:
     def _nearest_person_dist(frame_det: FrameDetections) -> float:
         if not frame_det.persons:
             return 999.0
-        return min(d.distance for d in frame_det.persons)
+        
+        dists = []
+        for p in frame_det.persons:
+            dist = p.distance
+            # Fallback nếu depth camera bị nhiễu (depth = 0.0) giống heuristic_policy
+            if dist < 0.15:
+                import numpy as np
+                x1, y1, x2, y2 = p.bbox
+                bbox_h = max(1, y2 - y1)
+                dist = float(np.clip(525.0 * 1.7 / bbox_h, 0.3, 5.0))
+            dists.append(dist)
+            
+        return min(dists)
 
     @staticmethod
     def _nearest_obstacle_dist(frame_det: FrameDetections) -> float:
