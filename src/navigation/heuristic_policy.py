@@ -213,11 +213,18 @@ class HeuristicPolicy:
         if dist < DEPTH_INVALID_THRESHOLD:
             x1, y1, x2, y2 = target_person.bbox
             bbox_h = max(1, y2 - y1)
-            dist = float(np.clip(525.0 * 1.7 / bbox_h, 0.3, 5.0))
-            logger.debug("Depth invalid, using bbox fallback: dist=%.2fm", dist)
+            bbox_w = max(1, x2 - x1)
+            # Camera bị mù ở < 0.4m, nhưng nếu người rất gần thì bbox sẽ rất lớn (do chỉ nhìn thấy phần thân)
+            # Công thức tính 1.7m sẽ sai bét nếu không thấy toàn thân.
+            if bbox_h > 350 or bbox_w > 300:
+                dist = 0.3  # Chắc chắn ở rất gần (< 0.5m), ép dừng khẩn cấp
+                logger.debug("Depth invalid & bbox HUGE (h=%d) -> FORCE STOP (0.3m)", bbox_h)
+            else:
+                dist = float(np.clip(525.0 * 1.7 / bbox_h, 0.3, 5.0))
+                logger.debug("Depth invalid, using bbox fallback: dist=%.2fm", dist)
 
         # Emergency stop chỉ khi quá gần (follow_min_distance). Khoảng (min, target) → lùi.
-        if dist <= self.follow_min_distance and target_person.distance > DEPTH_INVALID_THRESHOLD:
+        if dist <= self.follow_min_distance:
             logger.warning(
                 "Follow emergency stop: person at %.2fm (min=%.2fm)", dist, self.follow_min_distance
             )
@@ -310,8 +317,8 @@ class HeuristicPolicy:
                 frame_mid = 640 / 2.0
                 cx = (p.bbox[0] + p.bbox[2]) / 2.0
                 lateral_err = (cx - frame_mid) / frame_mid  # [-1, 1], + = người bên phải
-                # Người bên phải → vy âm (trượt phải để căn người vào giữa frame)
-                vy = float(np.clip(-lateral_err * 0.35, -0.5, 0.5))
+                # Tăng hệ số vy vì bánh mecanum cần moment lớn để thắng ma sát tĩnh khi trượt ngang
+                vy = float(np.clip(-lateral_err * 1.2, -0.8, 0.8))
                 logger.debug("Lateral strafe: cx=%.0f mid=%.0f err=%.2f vy=%.2f", cx, frame_mid, lateral_err, vy)
                 return vy
         return 0.0
