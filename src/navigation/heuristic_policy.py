@@ -101,14 +101,20 @@ class HeuristicPolicy:
             if obstacles and nearest_obstacle_dist < 0.3:
                 return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
             
-            # Né vật cản bằng cách trượt ngang (velocity_y) thay vì xoay đầu
-            strafe_nudge = 0.0
+            # Mecanum: dùng strafe (velocity_y) để né tường, KHÔNG xoay đầu
+            strafe = 0.0
             if robot_state:
-                if robot_state.dist_left < 0.45: strafe_nudge = -0.4  # trượt sang phải nếu bên trái vướng
-                elif robot_state.dist_right < 0.45: strafe_nudge = 0.4 # trượt sang trái nếu bên phải vướng
+                # Ưu tiên né tường trước (override strafe bám người)
+                if robot_state.dist_left < 0.4:
+                    strafe = -0.4   # trượt phải khi bên trái có tường
+                elif robot_state.dist_right < 0.4:
+                    strafe = 0.4    # trượt trái khi bên phải có tường
             
             cmd = self._decide_follow(persons, free_ratio, intent_map)
-            cmd.velocity_y = strafe_nudge
+            # Nếu không đang né tường, dùng strafe để bám người ngang
+            if strafe == 0.0:
+                strafe = self._lateral_strafe_to_target(self._follow_target_id, persons)
+            cmd.velocity_y = strafe
             return cmd
 
         if persons and nearest_person_dist < self.hard_stop_dist:
@@ -217,6 +223,8 @@ class HeuristicPolicy:
             )
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
 
+        # Mecanum follow: KHÔNG xoay đầu, giữ heading_offset = 0
+        # Lateral centering được xử lý bởi velocity_y ở tầng gọi hàm này
         error = dist - self.follow_target_distance
         if abs(error) < self.follow_deadband:
             vel = 0.0
@@ -224,16 +232,13 @@ class HeuristicPolicy:
             vel = self._context_velocity(error, free_ratio, intent_map)
 
         logger.debug(
-            "Follow: dist=%.2fm error=%.2fm vel=%.2f space=%.2f",
-            dist,
-            error,
-            vel,
-            free_ratio,
+            "Follow: dist=%.2fm error=%.2fm vel=%.2f heading=0 (strafe mode)",
+            dist, error, vel,
         )
         return self._make(
             NavigationMode.FOLLOW,
             vel,
-            heading,
+            0.0,             # heading_offset = 0: robot luôn giữ hướng, dùng vy để bám ngang
             confidence=0.88,
             follow_target_id=self._follow_target_id,
         )
@@ -290,25 +295,31 @@ class HeuristicPolicy:
         ).clip()
 
     @staticmethod
-    def _compute_avoid_heading(blocker: DetectionResult, frame_det: FrameDetections) -> float:
-        """Steer away from blocking person: if they are left → steer right."""
-        frame_mid = 640 / 2.0  # assume 640px width
-        cx = (blocker.bbox[0] + blocker.bbox[2]) / 2.0
-        # Nudge opposite to blocker's position
-        raw = -(cx - frame_mid) / frame_mid * math.radians(25)
-        return float(np.clip(raw, -math.pi / 4, math.pi / 4))
-
-    @staticmethod
-    def _heading_toward(target_id: int, persons: list[DetectionResult]) -> float:
+    def _lateral_strafe_to_target(target_id: int, persons: list[DetectionResult]) -> float:
+        """Tính velocity_y để căn giữa robot theo vị trí ngang của người (Mecanum strafe).
+        
+        Quy ước ROS:
+            linear.y > 0 = trượt TRÁI (robot's left)
+            linear.y < 0 = trượt PHẢI (robot's right)
+        
+        Người ở PHẢI camera (cx > mid) → robot phải trượt PHẢI → velocity_y < 0
+        Người ở TRÁI camera (cx < mid) → robot phải trượt TRÁI → velocity_y > 0
+        """
         for p in persons:
             if p.track_id == target_id:
                 frame_mid = 640 / 2.0
                 cx = (p.bbox[0] + p.bbox[2]) / 2.0
-                return float(
-                    np.clip(
-                        (cx - frame_mid) / frame_mid * math.radians(20),
-                        -math.pi / 4,
-                        math.pi / 4,
-                    )
-                )
+                lateral_err = (cx - frame_mid) / frame_mid  # [-1, 1], + = người bên phải
+                # Người bên phải → vy âm (trượt phải để căn người vào giữa frame)
+                vy = float(np.clip(-lateral_err * 0.35, -0.5, 0.5))
+                logger.debug("Lateral strafe: cx=%.0f mid=%.0f err=%.2f vy=%.2f", cx, frame_mid, lateral_err, vy)
+                return vy
         return 0.0
+
+    @staticmethod
+    def _compute_avoid_heading(blocker: DetectionResult, frame_det: FrameDetections) -> float:
+        """Steer away from blocking person: if they are left → steer right."""
+        frame_mid = 640 / 2.0
+        cx = (blocker.bbox[0] + blocker.bbox[2]) / 2.0
+        raw = -(cx - frame_mid) / frame_mid * math.radians(25)
+        return float(np.clip(raw, -math.pi / 4, math.pi / 4))
