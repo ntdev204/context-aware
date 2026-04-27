@@ -206,7 +206,6 @@ class HeuristicPolicy:
         if target_person is None:
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.90)
 
-        heading = self._heading_toward(self._follow_target_id, persons)
         dist = target_person.distance
 
         DEPTH_INVALID_THRESHOLD = 0.15
