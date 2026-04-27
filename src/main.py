@@ -281,9 +281,11 @@ class AIServer:
             intent_preds = cnn.predict_batch(rois)
 
             self._annotate_intents(frame_det, intent_preds)
-
             observation = ctx_bld.build(frame_det, intent_preds)
-            cmd = policy.decide(observation, frame_det, intent_preds)
+
+            robot_state = c["subscriber"].get_latest_state()
+            cmd = policy.decide(observation, frame_det, intent_preds, robot_state)
+
             cmd = safety.check(cmd, frame_det, intent_preds)
             cmd = self._apply_mode_override(cmd)
 
@@ -305,8 +307,6 @@ class AIServer:
             jpeg = encode_jpeg(annotated, quality=jpeg_quality)
             if jpeg:
                 self._state.push_frame(jpeg)
-
-            robot_state = c["subscriber"].get_latest_state()
 
             if exp_col is not None:
                 exp_col.collect(
