@@ -113,7 +113,7 @@ class HeuristicPolicy:
             cmd = self._decide_follow(persons, free_ratio, intent_map)
             # Nếu không đang né tường, dùng strafe để bám người ngang
             if strafe == 0.0:
-                strafe = self._lateral_strafe_to_target(self._follow_target_id, persons)
+                strafe = self._lateral_strafe_to_target(self._follow_target_id, persons, free_ratio)
             cmd.velocity_y = strafe
             return cmd
 
@@ -300,25 +300,35 @@ class HeuristicPolicy:
             confidence=confidence,
         ).clip()
 
-    @staticmethod
-    def _lateral_strafe_to_target(target_id: int, persons: list[DetectionResult]) -> float:
+    def _lateral_strafe_to_target(self, target_id: int, persons: list[DetectionResult], free_ratio: float) -> float:
         """Tính velocity_y để căn giữa robot theo vị trí ngang của người (Mecanum strafe).
         
         Quy ước ROS:
             linear.y > 0 = trượt TRÁI (robot's left)
             linear.y < 0 = trượt PHẢI (robot's right)
-        
-        Người ở PHẢI camera (cx > mid) → robot phải trượt PHẢI → velocity_y < 0
-        Người ở TRÁI camera (cx < mid) → robot phải trượt TRÁI → velocity_y > 0
         """
         for p in persons:
             if p.track_id == target_id:
                 frame_mid = 640 / 2.0
                 cx = (p.bbox[0] + p.bbox[2]) / 2.0
                 lateral_err = (cx - frame_mid) / frame_mid  # [-1, 1], + = người bên phải
-                # Tăng hệ số vy vì bánh mecanum cần moment lớn để thắng ma sát tĩnh khi trượt ngang
-                vy = float(np.clip(-lateral_err * 1.2, -0.8, 0.8))
-                logger.debug("Lateral strafe: cx=%.0f mid=%.0f err=%.2f vy=%.2f", cx, frame_mid, lateral_err, vy)
+                
+                # Nếu lệch ít (< 10%) thì không trượt ngang để tránh xe lắc lư liên tục (deadband)
+                if abs(lateral_err) < 0.10:
+                    return 0.0
+
+                # Hệ số không gian: thoáng (1.0) -> trượt nhanh hơn, hẹp (0) -> trượt cẩn thận
+                space_factor = 0.7 + 0.3 * float(np.clip(free_ratio, 0.0, 1.0))
+                
+                # Đảm bảo vy luôn nằm trong khoảng [follow_min_vel, follow_max_vel]
+                # giống y hệt như vx để xe di chuyển đồng bộ
+                vy_range = self.follow_max_vel - self.follow_min_vel
+                vy_mag = self.follow_min_vel + vy_range * abs(lateral_err) * space_factor
+                vy_mag = float(np.clip(vy_mag, self.follow_min_vel, self.follow_max_vel))
+
+                # Người bên phải (+ err) -> cần trượt phải (vy âm)
+                vy = -vy_mag if lateral_err > 0 else vy_mag
+                logger.debug("Lateral strafe: err=%.2f space=%.2f vy=%.2f", lateral_err, space_factor, vy)
                 return vy
         return 0.0
 
