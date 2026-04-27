@@ -42,8 +42,8 @@ perception:
       ]
 
   tracker:
-    max_age: 30
-    min_hits: 3
+    max_age: 60      # giữ track lâu hơn khi người bị che khuất tạm thời
+    min_hits: 1      # lock ngay frame đầu tiên, không cần chờ 3 frame
     iou_threshold: 0.3
 
   roi:

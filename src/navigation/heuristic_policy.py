@@ -188,7 +188,17 @@ class HeuristicPolicy:
                     lost_for,
                 )
                 self._follow_target_id = -1
+            elif persons:
+                # Người trở lại với track_id mới (tracker re-assigned) — re-lock ngay
+                target = min(persons, key=lambda p: p.distance)
+                logger.info(
+                    "Follow target %d re-acquired as track_id=%d (was lost %.1fs)",
+                    self._follow_target_id, target.track_id, lost_for,
+                )
+                self._follow_target_id = target.track_id
+                self._target_last_seen = now
             else:
+                # Thực sự không thấy ai — chờ thêm
                 return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.90)
 
         if self._follow_target_id < 0 and persons:
