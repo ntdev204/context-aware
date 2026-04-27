@@ -171,31 +171,31 @@ class ZMQSubscriber:
         # Fallback to struct unpack if data is 52 bytes: 11 floats (44 bytes) + 1 double (8 bytes)
         if len(data) == 52:
             vx, vy, vtheta, px, py, ptheta, batt, df, dr, dl, dri, ts = struct.unpack("!11fd", data)
-                return RobotState(
-                    vx=vx,
-                    vy=vy,
-                    vtheta=vtheta,
-                    pos_x=px,
-                    pos_y=py,
-                    battery_percent=batt,
-                    dist_front=df,
-                    dist_rear=dr,
-                    dist_left=dl,
-                    dist_right=dri,
-                    nav2_status="idle",
-                    timestamp=ts,
-                )
-            # Legacy 36 bytes (7 floats + 1 double)
-            if len(data) == 36:
-                vx, vy, vtheta, px, py, ptheta, batt, ts = struct.unpack("!7fd", data)
-                return RobotState(
-                    vx=vx,
-                    vy=vy,
-                    vtheta=vtheta,
-                    pos_x=px,
-                    pos_y=py,
-                    battery_percent=batt,
-                    nav2_status="idle",
-                    timestamp=ts,
-                )
-            return RobotState()
+            return RobotState(
+                vx=vx,
+                vy=vy,
+                vtheta=vtheta,
+                pos_x=px,
+                pos_y=py,
+                battery_percent=batt,
+                dist_front=df,
+                dist_rear=dr,
+                dist_left=dl,
+                dist_right=dri,
+                nav2_status="idle",
+                timestamp=ts,
+            )
+        # Legacy 36 bytes (7 floats + 1 double)
+        if len(data) == 36:
+            vx, vy, vtheta, px, py, ptheta, batt, ts = struct.unpack("!7fd", data)
+            return RobotState(
+                vx=vx,
+                vy=vy,
+                vtheta=vtheta,
+                pos_x=px,
+                pos_y=py,
+                battery_percent=batt,
+                nav2_status="idle",
+                timestamp=ts,
+            )
+        raise ValueError(f"Unknown state payload length: {len(data)}")
