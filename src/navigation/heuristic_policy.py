@@ -101,14 +101,14 @@ class HeuristicPolicy:
             if obstacles and nearest_obstacle_dist < 0.3:
                 return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
             
-            # Tích hợp né vật cản từ Lidar vào Follow Mode
-            lidar_nudge = 0.0
+            # Né vật cản bằng cách trượt ngang (velocity_y) thay vì xoay đầu
+            strafe_nudge = 0.0
             if robot_state:
-                if robot_state.dist_left < 0.4: lidar_nudge = -0.25 # né phải
-                elif robot_state.dist_right < 0.4: lidar_nudge = 0.25 # né trái
+                if robot_state.dist_left < 0.45: strafe_nudge = -0.4  # trượt sang phải nếu bên trái vướng
+                elif robot_state.dist_right < 0.45: strafe_nudge = 0.4 # trượt sang trái nếu bên phải vướng
             
             cmd = self._decide_follow(persons, free_ratio, intent_map)
-            cmd.heading_offset = float(np.clip(cmd.heading_offset + lidar_nudge, -math.pi/4, math.pi/4))
+            cmd.velocity_y = strafe_nudge
             return cmd
 
         if persons and nearest_person_dist < self.hard_stop_dist:
