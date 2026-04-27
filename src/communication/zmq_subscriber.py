@@ -18,6 +18,12 @@ from collections.abc import Callable
 import zmq
 
 from ..navigation.context_builder import RobotState
+import struct
+
+try:
+    from .proto import messages_pb2 as pb
+except ImportError:
+    pb = None
 
 logger = logging.getLogger(__name__)
 
@@ -145,27 +151,26 @@ class ZMQSubscriber:
 
     @staticmethod
     def _decode(data: bytes) -> RobotState:
-        try:
-            from .proto import messages_pb2 as pb
+        if pb is not None:
+            try:
+                msg = pb.RobotState()
+                msg.ParseFromString(data)
+                return RobotState(
+                    vx=msg.vx,
+                    vy=msg.vy,
+                    vtheta=msg.vtheta,
+                    pos_x=msg.pos_x,
+                    pos_y=msg.pos_y,
+                    battery_percent=msg.battery_percent,
+                    nav2_status=msg.nav2_status,
+                    timestamp=msg.timestamp,
+                )
+            except Exception:
+                pass
 
-            msg = pb.RobotState()
-            msg.ParseFromString(data)
-            return RobotState(
-                vx=msg.vx,
-                vy=msg.vy,
-                vtheta=msg.vtheta,
-                pos_x=msg.pos_x,
-                pos_y=msg.pos_y,
-                battery_percent=msg.battery_percent,
-                nav2_status=msg.nav2_status,
-                timestamp=msg.timestamp,
-            )
-        except (ImportError, AttributeError, Exception):
-            import struct
-
-            # Fallback to struct unpack if data is 52 bytes: 11 floats (44 bytes) + 1 double (8 bytes)
-            if len(data) == 52:
-                vx, vy, vtheta, px, py, ptheta, batt, df, dr, dl, dri, ts = struct.unpack("!11fd", data)
+        # Fallback to struct unpack if data is 52 bytes: 11 floats (44 bytes) + 1 double (8 bytes)
+        if len(data) == 52:
+            vx, vy, vtheta, px, py, ptheta, batt, df, dr, dl, dri, ts = struct.unpack("!11fd", data)
                 return RobotState(
                     vx=vx,
                     vy=vy,
