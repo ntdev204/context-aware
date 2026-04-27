@@ -409,6 +409,13 @@ class AIServer:
         c = self._components
         c["safety_monitor"].update_robot_state(state)
         c["context_builder"].update_robot_state(state)
+        
+        # Đẩy dữ liệu lên API để Website hiển thị Online và cập nhật Pin
+        self._state.update_metrics(
+            battery_percent=state.battery_percent,
+            vx=state.vx,
+            vtheta=state.vtheta
+        )
 
     def _on_watchdog_timeout(self) -> None:
         logger.warning("Watchdog: no RobotState -- safety stop active")

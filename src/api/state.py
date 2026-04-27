@@ -16,6 +16,9 @@ class InferenceMetrics:
     obstacles: int = 0
     buffer_size: int = 0
     depth_coverage_pct: float = 0.0
+    battery_percent: float = 0.0
+    vx: float = 0.0
+    vtheta: float = 0.0
     mode: str = "IDLE"
     frame_id: int = 0
     updated_at: float = field(default_factory=time.monotonic)
@@ -62,6 +65,9 @@ class ServerState:
                 obstacles=m.obstacles,
                 buffer_size=m.buffer_size,
                 depth_coverage_pct=m.depth_coverage_pct,
+                battery_percent=m.battery_percent,
+                vx=m.vx,
+                vtheta=m.vtheta,
                 mode=m.mode,
                 frame_id=m.frame_id,
                 updated_at=m.updated_at,
