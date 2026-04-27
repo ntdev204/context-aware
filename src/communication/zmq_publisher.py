@@ -22,6 +22,12 @@ except ImportError:  # pragma: no cover
 
 from ..navigation.nav_command import NavigationCommand
 from ..perception.yolo_detector import FrameDetections
+import struct
+
+try:
+    from .proto import messages_pb2 as pb
+except ImportError:
+    pb = None
 
 logger = logging.getLogger(__name__)
 
@@ -121,8 +127,6 @@ class ZMQPublisher:
           - confidence     : float32
           - safety_override: uint8
         """
-        import struct
-
         return struct.pack(
             "!ifffiffB",
             int(cmd.mode),
@@ -137,9 +141,9 @@ class ZMQPublisher:
 
     @staticmethod
     def _encode_detections(frame_det: FrameDetections) -> bytes:
+        if pb is None:
+            return b""
         try:
-            from .proto import messages_pb2 as pb
-
             msg = pb.DetectionList()
             msg.timestamp = frame_det.timestamp
             msg.frame_id = frame_det.frame_id
