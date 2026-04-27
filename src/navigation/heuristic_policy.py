@@ -98,9 +98,8 @@ class HeuristicPolicy:
         # tại follow_min_distance (0.5m). KHÔNG dùng hard_stop_dist (2.0m) ở đây vì sẽ
         # chặn lệnh lùi ra xa khi người đứng trong khoảng (0.5m, 2.0m).
         if self.auto_follow:
-            if obstacles and nearest_obstacle_dist < 0.3:
-                return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
-            
+            # Lidar Safety Shield trên Raspberry Pi sẽ tự động chặn vật cản ở cấp độ cm.
+            # Jetson không được gửi STOP, để cho xe trượt ngang né qua vật cản.
             # Mecanum: dùng strafe (velocity_y) để né tường, KHÔNG xoay đầu
             strafe = 0.0
             if robot_state:
@@ -222,12 +221,8 @@ class HeuristicPolicy:
                 dist = float(np.clip(525.0 * 1.7 / bbox_h, 0.3, 5.0))
                 logger.debug("Depth invalid, using bbox fallback: dist=%.2fm", dist)
 
-        # Emergency stop chỉ khi quá gần (follow_min_distance). Khoảng (min, target) → lùi.
-        if dist <= self.follow_min_distance:
-            logger.warning(
-                "Follow emergency stop: person at %.2fm (min=%.2fm)", dist, self.follow_min_distance
-            )
-            return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
+        # Không ép STOP khi quá gần nữa. Cứ để logic tính velocity tự động trả về số âm (lùi)
+        # và cho phép tiếp tục tính strafe (vy) để xe luôn bám người ngay cả khi lùi.
 
         # Mecanum follow: KHÔNG xoay đầu, giữ heading_offset = 0
         # Lateral centering được xử lý bởi velocity_y ở tầng gọi hàm này
