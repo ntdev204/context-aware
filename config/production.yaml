@@ -81,7 +81,7 @@ navigation:
     follow_min_distance: 0.5     # khoảng cách tối thiểu tuyệt đối — STOP nếu người < 0.5m (cho phép lùi trong [0.5m, 1.2m])
 
   safety:
-    hard_stop_distance_person: 0.8
+    hard_stop_distance_person: 0.4   # Camera-based fallback only (Pi Lidar handles 0.5m+)
     hard_stop_distance_obstacle: 0.2
     slow_down_distance: 3.0
     slow_down_factor: 0.5

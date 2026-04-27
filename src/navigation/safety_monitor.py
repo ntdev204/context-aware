@@ -98,17 +98,8 @@ class SafetyMonitor:
             logger.info("Safety STOP: camera obstacle at %.2f m", nearest_obstacle_dist)
             return self._emergency_stop(cmd, "obstacle_proximity")
 
-        # Hard stop: Lidar proximity
-        if self._robot_state:
-            rs = self._robot_state
-            # Chặn tiến nếu phía trước vướng
-            if cmd.velocity_scale > 0 and rs.dist_front < self.hard_stop_obstacle:
-                logger.info("Safety STOP: Lidar front obstacle at %.2f m", rs.dist_front)
-                return self._emergency_stop(cmd, "lidar_front")
-            # Chặn lùi nếu phía sau vướng (Giải quyết vấn đề 'không dừng khi đằng sau có vật')
-            if cmd.velocity_scale < 0 and rs.dist_rear < self.hard_stop_obstacle:
-                logger.info("Safety STOP: Lidar rear obstacle at %.2f m", rs.dist_rear)
-                return self._emergency_stop(cmd, "lidar_rear")
+        # Note: Lidar-based collision avoidance is fully handled by the Pi Safety Shield.
+        # No duplicate check here to avoid false positives from noisy Lidar data.
 
         # ERRATIC intent override
         for pred in intent_preds:
