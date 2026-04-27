@@ -80,6 +80,7 @@ class HeuristicPolicy:
         observation: np.ndarray,
         frame_det: FrameDetections,
         intent_preds: list[IntentPrediction],
+        robot_state: RobotState | None = None,
     ) -> NavigationCommand:
         """Return a NavigationCommand based on pure rule logic."""
         self._observation = observation
@@ -99,7 +100,16 @@ class HeuristicPolicy:
         if self.auto_follow:
             if obstacles and nearest_obstacle_dist < 0.3:
                 return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
-            return self._decide_follow(persons, free_ratio, intent_map)
+            
+            # Tích hợp né vật cản từ Lidar vào Follow Mode
+            lidar_nudge = 0.0
+            if robot_state:
+                if robot_state.dist_left < 0.4: lidar_nudge = -0.25 # né phải
+                elif robot_state.dist_right < 0.4: lidar_nudge = 0.25 # né trái
+            
+            cmd = self._decide_follow(persons, free_ratio, intent_map)
+            cmd.heading_offset = float(np.clip(cmd.heading_offset + lidar_nudge, -math.pi/4, math.pi/4))
+            return cmd
 
         if persons and nearest_person_dist < self.hard_stop_dist:
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)

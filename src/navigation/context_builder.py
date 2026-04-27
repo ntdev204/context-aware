@@ -51,6 +51,10 @@ class RobotState:
     pos_x: float = 0.0
     pos_y: float = 0.0
     battery_percent: float = 100.0
+    dist_front: float = 9.9
+    dist_rear: float = 9.9
+    dist_left: float = 9.9
+    dist_right: float = 9.9
     nav2_status: str = "idle"
     timestamp: float = field(default_factory=time.time)
 

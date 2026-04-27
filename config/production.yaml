@@ -82,7 +82,7 @@ navigation:
 
   safety:
     hard_stop_distance_person: 0.8
-    hard_stop_distance_obstacle: 0.3
+    hard_stop_distance_obstacle: 0.2
     slow_down_distance: 3.0
     slow_down_factor: 0.5
     watchdog_timeout_ms: 500
