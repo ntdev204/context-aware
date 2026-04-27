@@ -102,21 +102,22 @@ def _build_pipeline(cfg) -> dict:
         occupancy_grid_size=ctx_cfg.get("occupancy_grid_size", 8),
     )
 
+    heuristic_cfg = nav_cfg.get("heuristic", {})
     heuristic_policy = HeuristicPolicy(
-        cruise_free_space_threshold=nav_cfg.get("heuristic.cruise_free_space_threshold", 0.8),
-        cruise_velocity=nav_cfg.get("heuristic.cruise_velocity", 1.0),
-        cautious_velocity=nav_cfg.get("heuristic.cautious_velocity", 0.6),
-        avoid_velocity=nav_cfg.get("heuristic.avoid_velocity", 0.3),
-        follow_max_vel=nav_cfg.get("heuristic.follow_max_vel", 0.8),
-        follow_min_vel=nav_cfg.get("heuristic.follow_min_vel", 0.3),
+        cruise_free_space_threshold=heuristic_cfg.get("cruise_free_space_threshold", 0.8),
+        cruise_velocity=heuristic_cfg.get("cruise_velocity", 1.0),
+        cautious_velocity=heuristic_cfg.get("cautious_velocity", 0.6),
+        avoid_velocity=heuristic_cfg.get("avoid_velocity", 0.3),
+        follow_max_vel=heuristic_cfg.get("follow_max_vel", 0.8),
+        follow_min_vel=heuristic_cfg.get("follow_min_vel", 0.3),
         hard_stop_distance=safe_cfg.get("hard_stop_distance_person", 2.0),
         slow_down_distance=safe_cfg.get("slow_down_distance", 3.0),
-        auto_follow=nav_cfg.get("heuristic.auto_follow", False),
-        follow_target_distance=nav_cfg.get("heuristic.follow_target_distance", 2.0),
-        follow_deadband=nav_cfg.get("heuristic.follow_deadband", 0.08),
-        follow_kp=nav_cfg.get("heuristic.follow_kp", 1.0),
-        target_lost_timeout_s=nav_cfg.get("heuristic.target_lost_timeout_s", 300.0),
-        follow_min_distance=nav_cfg.get("heuristic.follow_min_distance", 0.5),
+        auto_follow=heuristic_cfg.get("auto_follow", False),
+        follow_target_distance=heuristic_cfg.get("follow_target_distance", 2.0),
+        follow_deadband=heuristic_cfg.get("follow_deadband", 0.08),
+        follow_kp=heuristic_cfg.get("follow_kp", 1.0),
+        target_lost_timeout_s=heuristic_cfg.get("target_lost_timeout_s", 300.0),
+        follow_min_distance=heuristic_cfg.get("follow_min_distance", 0.5),
     )
 
     safety_monitor = SafetyMonitor(

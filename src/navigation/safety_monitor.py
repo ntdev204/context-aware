@@ -138,8 +138,10 @@ class SafetyMonitor:
 
     @staticmethod
     def _emergency_stop(cmd: NavigationCommand, reason: str) -> NavigationCommand:
-        cmd.mode = NavigationMode.STOP
+        # User requested: Do not change mode to STOP so it can seamlessly resume FOLLOW
+        # cmd.mode = NavigationMode.STOP 
         cmd.velocity_scale = 0.0
+        cmd.velocity_y = 0.0
         cmd.heading_offset = 0.0
         cmd.safety_override = True
         cmd.confidence = 1.0
