@@ -111,10 +111,11 @@ class ZMQPublisher:
     def _encode_nav_cmd(cmd: NavigationCommand) -> bytes:
         """Encode NavigationCommand thành binary struct để gửi cho Pi.
 
-        Format (25 bytes): i f f i f f B
+        Format (29 bytes): i f f f i f f B
           - mode           : int32   (NavigationMode)
-          - velocity_scale : float32 ([-1.0, 1.0])
-          - heading_offset : float32 (radians)
+          - velocity_scale : float32 (Linear X)
+          - velocity_y     : float32 (Linear Y)
+          - heading_offset : float32 (Angular Z)
           - follow_id      : int32   (track_id)
           - timestamp      : float32 (epoch seconds, truncated ok)
           - confidence     : float32
@@ -123,9 +124,10 @@ class ZMQPublisher:
         import struct
 
         return struct.pack(
-            "!iffiffB",
+            "!ifffiffB",
             int(cmd.mode),
             float(cmd.velocity_scale),
+            float(cmd.velocity_y),
             float(cmd.heading_offset),
             int(cmd.follow_target_id),
             float(cmd.timestamp),
