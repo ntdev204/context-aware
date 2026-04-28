@@ -99,8 +99,9 @@ class HeuristicPolicy:
         # chặn lệnh lùi ra xa khi người đứng trong khoảng (0.5m, 2.0m).
         if self.auto_follow:
             cmd = self._decide_follow(persons, free_ratio, intent_map)
-            cmd.velocity_y = self._lateral_strafe_to_target(self._follow_target_id, persons, free_ratio)
+            cmd.velocity_y = 0.0  # strafe tắt: chỉ dùng vx để bám thẳng
             return cmd
+
 
 
         if persons and nearest_person_dist < self.hard_stop_dist:
