@@ -195,19 +195,15 @@ class HeuristicPolicy:
 
         dist = target_person.distance
 
+        # Khi depth không hợp lệ (< 0.15m hoặc = 0): KHÔNG dùng bbox fallback
+        # vì camera ở 50cm chỉ thấy chân → bbox_h nhỏ → công thức cho ra 8-9m → robot tiến mạnh sai.
+        # Thay vào đó: giả định người ở đúng target_distance → error = 0 → vel = 0 (dừng tại chỗ)
         DEPTH_INVALID_THRESHOLD = 0.15
         if dist < DEPTH_INVALID_THRESHOLD:
-            x1, y1, x2, y2 = target_person.bbox
-            bbox_h = max(1, y2 - y1)
-            bbox_w = max(1, x2 - x1)
-            # Camera bị mù ở < 0.4m, nhưng nếu người rất gần thì bbox sẽ rất lớn (do chỉ nhìn thấy phần thân)
-            # Công thức tính 1.7m sẽ sai bét nếu không thấy toàn thân.
-            if bbox_h > 350 or bbox_w > 300:
-                dist = 0.3  # Chắc chắn ở rất gần (< 0.5m), ép dừng khẩn cấp
-                logger.debug("Depth invalid & bbox HUGE (h=%d) -> FORCE STOP (0.3m)", bbox_h)
-            else:
-                dist = float(np.clip(525.0 * 1.7 / bbox_h, 0.3, 5.0))
-                logger.debug("Depth invalid, using bbox fallback: dist=%.2fm", dist)
+            logger.debug("Depth invalid (%.2fm) → assume at target distance, vel=0", dist)
+            dist = self.follow_target_distance
+
+
 
         # Không ép STOP khi quá gần nữa. Cứ để logic tính velocity tự động trả về số âm (lùi)
         # và cho phép tiếp tục tính strafe (vy) để xe luôn bám người ngay cả khi lùi.
