@@ -18,8 +18,11 @@ from __future__ import annotations
 import argparse
 import logging
 import signal
+import threading
 import time
 import uuid
+from dataclasses import dataclass
+from typing import Any
 
 from .api import ServerState, start_api_server
 from .communication import ZMQPublisher, ZMQSubscriber
@@ -30,11 +33,13 @@ from .experience.roi_saver import ROISaver
 from .navigation import (
     ContextBuilder,
     HeuristicPolicy,
+    NavigationCommand,
     NavigationMode,
     RobotState,
 )
 from .perception import (
     Camera,
+    FrameDetections,
     GroundSegmenter,
     IntentCNN,
     ROIExtractor,
@@ -44,6 +49,82 @@ from .perception import (
 from .streaming import draw_detections, draw_freespace_overlay, encode_jpeg
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _PerceptionSnapshot:
+    frame_det: FrameDetections
+    cmd: NavigationCommand
+    frame_id: int
+    processed_at: float
+
+
+class _AsyncPerceptionWorker:
+    """Runs the heavy perception/navigation path on the latest submitted frame.
+
+    The video loop submits frames at camera FPS. If inference is still busy, the
+    pending frame is replaced with the newest one so latency stays bounded.
+    """
+
+    def __init__(self, process_frame) -> None:
+        self._process_frame = process_frame
+        self._cond = threading.Condition()
+        self._pending: tuple[Any, Any, int] | None = None
+        self._latest: _PerceptionSnapshot | None = None
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self.processed_count = 0
+        self.dropped_count = 0
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._run,
+            daemon=True,
+            name="perception-worker",
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        with self._cond:
+            self._running = False
+            self._pending = None
+            self._cond.notify_all()
+        if self._thread:
+            self._thread.join(timeout=2.0)
+
+    def submit(self, frame, depth_frame, frame_id: int) -> None:
+        with self._cond:
+            if self._pending is not None:
+                self.dropped_count += 1
+            self._pending = (frame, depth_frame, frame_id)
+            self._cond.notify()
+
+    def latest(self) -> _PerceptionSnapshot | None:
+        with self._cond:
+            return self._latest
+
+    def _run(self) -> None:
+        while True:
+            with self._cond:
+                while self._running and self._pending is None:
+                    self._cond.wait()
+                if not self._running:
+                    return
+                frame, depth_frame, frame_id = self._pending
+                self._pending = None
+
+            try:
+                snapshot = self._process_frame(frame, depth_frame, frame_id)
+            except Exception:
+                logger.exception("Async perception frame processing failed")
+                continue
+
+            with self._cond:
+                self._latest = snapshot
+                self.processed_count += 1
 
 
 def _parse_args() -> argparse.Namespace:
@@ -97,6 +178,16 @@ def _build_pipeline(cfg) -> dict:
             sector_count=freespace_cfg.get("sector_count", 8),
             sector_free_threshold=freespace_cfg.get("sector_free_threshold", 0.55),
             fov_deg=freespace_cfg.get("fov_deg", None),
+            bbox_fallback_enabled=freespace_cfg.get("bbox_fallback_enabled", True),
+            fallback_roi_top_ratio=freespace_cfg.get("fallback_roi_top_ratio", 0.45),
+            fallback_roi_top_width_ratio=freespace_cfg.get(
+                "fallback_roi_top_width_ratio", 0.35
+            ),
+            fallback_max_obstacle_ratio=freespace_cfg.get("fallback_max_obstacle_ratio", 0.65),
+            rgb_floor_fallback_enabled=freespace_cfg.get("rgb_floor_fallback_enabled", True),
+            floor_color_threshold=freespace_cfg.get("floor_color_threshold", 48.0),
+            floor_seed_bottom_ratio=freespace_cfg.get("floor_seed_bottom_ratio", 0.22),
+            min_navigable_width_m=freespace_cfg.get("min_navigable_width_m", 1.0),
         )
         if freespace_enabled
         else None
@@ -215,6 +306,7 @@ class AIServer:
         self._running = False
         self._state = ServerState()
         self._components = _build_pipeline(cfg)
+        self._perception_worker: _AsyncPerceptionWorker | None = None
 
     def start(self) -> None:
         c = self._components
@@ -249,6 +341,9 @@ class AIServer:
         self._running = False
         self._state.set_running(False)
         c = self._components
+        if self._perception_worker is not None:
+            self._perception_worker.stop()
+            self._perception_worker = None
         c["subscriber"].stop()
         c["publisher"].stop()
         c["camera"].stop()
@@ -267,19 +362,13 @@ class AIServer:
         jpeg_quality = c["stream_jpeg_quality"]
         dev_mode = self.cfg.get("system.mode", "production") == "development"
 
-        yolo = c["yolo"]
-        tracker = c["tracker"]
-        ground_segmenter = c["ground_segmenter"]
-        roi_ex = c["roi_extractor"]
-        cnn = c["intent_cnn"]
-        ctx_bld = c["context_builder"]
-        policy = c["heuristic_policy"]
-        pub = c["publisher"]
-        exp_col = c["exp_collector"]
-
         frame_id = 0
         fps_count = 0
         t_fps = time.monotonic()
+        worker = _AsyncPerceptionWorker(self._process_perception_frame)
+        self._perception_worker = worker
+        worker.start()
+        logger.info("Async perception worker started -- video loop is decoupled from detection")
 
         while self._running:
             t0 = time.monotonic()
@@ -289,30 +378,21 @@ class AIServer:
                 time.sleep(0.005)
                 continue
 
-            frame_det = yolo.detect(frame, frame_id=frame_id, depth_frame=depth_frame)
-            if ground_segmenter is not None:
-                freespace = ground_segmenter.segment(
-                    depth_frame,
-                    detections=frame_det,
-                    frame_shape=frame.shape,
+            worker.submit(frame, depth_frame, frame_id)
+            latest = worker.latest()
+            if latest is None:
+                h, w = frame.shape[:2]
+                frame_det = FrameDetections(
+                    timestamp=time.time(),
+                    frame_id=frame_id,
+                    free_space_ratio=0.0,
+                    frame_width=w,
+                    frame_height=h,
                 )
-                ground_segmenter.apply_to_frame(frame_det, freespace)
-            frame_det = tracker.update(frame_det, frame.shape)
-            rois = roi_ex.extract(frame, frame_det)
-            intent_preds = cnn.predict_batch(rois)
-
-            self._annotate_intents(frame_det, intent_preds)
-            observation = ctx_bld.build(frame_det, intent_preds)
-
-            robot_state = c["subscriber"].get_latest_state()
-            cmd = policy.decide(observation, frame_det, intent_preds, robot_state)
-
-            cmd = self._apply_mode_override(cmd)
-
-            ctx_bld.update_prev_action(cmd)
-
-            pub.publish_nav_cmd(cmd)
-            pub.publish_detections(frame_det)
+                cmd = NavigationCommand(mode=NavigationMode.STOP, safety_override=True)
+            else:
+                frame_det = latest.frame_det
+                cmd = latest.cmd
 
             if dev_mode:
                 self._show_dev_window(frame, frame_det, cmd)
@@ -328,18 +408,6 @@ class AIServer:
             jpeg = encode_jpeg(annotated, quality=jpeg_quality)
             if jpeg:
                 self._state.push_frame(jpeg)
-
-            if exp_col is not None:
-                exp_col.collect(
-                    raw_frame=frame,
-                    frame_det=frame_det,
-                    intent_preds=intent_preds,
-                    observation=observation,
-                    cmd=cmd,
-                    robot_state=robot_state,
-                )
-            elif c["roi_saver"] is not None and len(rois) > 0:
-                c["roi_saver"].push(rois, frame_id)
 
             frame_id += 1
             fps_count += 1
@@ -357,6 +425,68 @@ class AIServer:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _process_perception_frame(
+        self,
+        frame,
+        depth_frame,
+        frame_id: int,
+    ) -> _PerceptionSnapshot:
+        c = self._components
+        yolo = c["yolo"]
+        tracker = c["tracker"]
+        ground_segmenter = c["ground_segmenter"]
+        roi_ex = c["roi_extractor"]
+        cnn = c["intent_cnn"]
+        ctx_bld = c["context_builder"]
+        policy = c["heuristic_policy"]
+        pub = c["publisher"]
+        exp_col = c["exp_collector"]
+
+        frame_det = yolo.detect(frame, frame_id=frame_id, depth_frame=depth_frame)
+        if ground_segmenter is not None:
+            freespace = ground_segmenter.segment(
+                depth_frame,
+                detections=frame_det,
+                frame_shape=frame.shape,
+                color_frame=frame,
+            )
+            ground_segmenter.apply_to_frame(frame_det, freespace)
+        frame_det = tracker.update(frame_det, frame.shape)
+        rois = roi_ex.extract(frame, frame_det)
+        intent_preds = cnn.predict_batch(rois)
+
+        self._annotate_intents(frame_det, intent_preds)
+        observation = ctx_bld.build(frame_det, intent_preds)
+
+        robot_state = c["subscriber"].get_latest_state()
+        cmd = policy.decide(observation, frame_det, intent_preds, robot_state)
+        cmd = self._apply_mode_override(cmd)
+
+        ctx_bld.update_prev_action(cmd)
+
+        pub.publish_nav_cmd(cmd)
+        pub.publish_detections(frame_det)
+        self._state.update_detections(self._detections_payload(frame_det, cmd))
+
+        if exp_col is not None:
+            exp_col.collect(
+                raw_frame=frame,
+                frame_det=frame_det,
+                intent_preds=intent_preds,
+                observation=observation,
+                cmd=cmd,
+                robot_state=robot_state,
+            )
+        elif c["roi_saver"] is not None and len(rois) > 0:
+            c["roi_saver"].push(rois, frame_id)
+
+        return _PerceptionSnapshot(
+            frame_det=frame_det,
+            cmd=cmd,
+            frame_id=frame_id,
+            processed_at=time.monotonic(),
+        )
 
     def _annotate_intents(self, frame_det, intent_preds) -> None:
         intent_map = {p.track_id: p for p in intent_preds}
@@ -389,6 +519,37 @@ class AIServer:
         except KeyError:
             logger.warning("Unknown mode override '%s' -- ignoring", override)
         return cmd
+
+    def _detections_payload(self, frame_det, cmd) -> dict[str, Any]:
+        def _det_payload(det) -> dict[str, Any]:
+            return {
+                "track_id": det.track_id,
+                "bbox": list(det.bbox),
+                "class_name": det.class_name,
+                "confidence": det.confidence,
+                "distance": det.distance,
+                "distance_source": det.distance_source,
+                "intent_name": det.intent_name,
+                "intent_confidence": det.intent_confidence,
+            }
+
+        return {
+            "timestamp": frame_det.timestamp,
+            "frame_id": frame_det.frame_id,
+            "mode": cmd.mode.name,
+            "free_space_ratio": frame_det.free_space_ratio,
+            "free_sectors": (
+                frame_det.free_sectors.astype(float).tolist()
+                if frame_det.free_sectors is not None
+                else []
+            ),
+            "navigable_heading": frame_det.navigable_heading,
+            "navigable_width": frame_det.navigable_width,
+            "navigable_width_m": frame_det.navigable_width_m,
+            "inference_ms": frame_det.inference_ms + frame_det.freespace_processing_ms,
+            "persons": [_det_payload(p) for p in frame_det.persons],
+            "obstacles": [_det_payload(o) for o in frame_det.obstacles],
+        }
 
     def _update_metrics(
         self, fps_count: int, elapsed: float, frame_det, frame_id: int, cmd, c: dict

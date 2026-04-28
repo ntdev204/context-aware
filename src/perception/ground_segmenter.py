@@ -20,6 +20,7 @@ class FreeSpaceResult:
     free_sectors: np.ndarray = field(default_factory=lambda: np.zeros(8, dtype=np.float32))
     navigable_heading: float = 0.0
     navigable_width: float = 0.0
+    navigable_width_m: float = 0.0
     processing_ms: float = 0.0
 
 
@@ -48,6 +49,14 @@ class GroundSegmenter:
         sector_count: int = 8,
         sector_free_threshold: float = 0.55,
         fov_deg: float | None = None,
+        bbox_fallback_enabled: bool = True,
+        fallback_roi_top_ratio: float = 0.45,
+        fallback_roi_top_width_ratio: float = 0.35,
+        fallback_max_obstacle_ratio: float = 0.65,
+        rgb_floor_fallback_enabled: bool = True,
+        floor_color_threshold: float = 48.0,
+        floor_seed_bottom_ratio: float = 0.22,
+        min_navigable_width_m: float = 1.0,
     ) -> None:
         self.fx = float(fx)
         self.fy = float(fy)
@@ -64,6 +73,16 @@ class GroundSegmenter:
         self.sector_count = max(1, int(sector_count))
         self.sector_free_threshold = float(sector_free_threshold)
         self.fov_rad = math.radians(float(fov_deg)) if fov_deg is not None else None
+        self.bbox_fallback_enabled = bool(bbox_fallback_enabled)
+        self.fallback_roi_top_ratio = float(np.clip(fallback_roi_top_ratio, 0.05, 0.95))
+        self.fallback_roi_top_width_ratio = float(
+            np.clip(fallback_roi_top_width_ratio, 0.05, 1.0)
+        )
+        self.fallback_max_obstacle_ratio = float(np.clip(fallback_max_obstacle_ratio, 0.0, 1.0))
+        self.rgb_floor_fallback_enabled = bool(rgb_floor_fallback_enabled)
+        self.floor_color_threshold = float(max(1.0, floor_color_threshold))
+        self.floor_seed_bottom_ratio = float(np.clip(floor_seed_bottom_ratio, 0.05, 0.5))
+        self.min_navigable_width_m = float(max(0.0, min_navigable_width_m))
         self._ray_cache: dict[tuple[int, int, int, int], tuple[np.ndarray, np.ndarray]] = {}
 
     def segment(
@@ -71,11 +90,23 @@ class GroundSegmenter:
         depth_frame: np.ndarray | None,
         detections: Any | None = None,
         frame_shape: tuple[int, int] | tuple[int, int, int] | None = None,
+        color_frame: np.ndarray | None = None,
     ) -> FreeSpaceResult:
         t0 = time.monotonic()
 
         if depth_frame is None:
-            h, w = self._shape_from_frame(frame_shape)
+            fallback = color_frame.shape[:2] if color_frame is not None else (480, 640)
+            h, w = self._shape_from_frame(frame_shape, fallback=fallback)
+            if frame_shape is not None or color_frame is not None:
+                fallback_result = self._fallback_result(
+                    h,
+                    w,
+                    detections,
+                    (time.monotonic() - t0) * 1000.0,
+                    color_frame=color_frame,
+                )
+                if fallback_result is not None:
+                    return fallback_result
             return self._empty_unknown(h, w, (time.monotonic() - t0) * 1000.0)
 
         if depth_frame.ndim != 2:
@@ -90,6 +121,16 @@ class GroundSegmenter:
 
         valid = (depth_small >= self.depth_min_mm) & (depth_small <= self.depth_max_mm)
         if not np.any(valid):
+            if frame_shape is not None or color_frame is not None:
+                fallback_result = self._fallback_result(
+                    frame_h,
+                    frame_w,
+                    detections,
+                    (time.monotonic() - t0) * 1000.0,
+                    color_frame=color_frame,
+                )
+                if fallback_result is not None:
+                    return fallback_result
             result = self._empty_unknown(depth_h, depth_w, (time.monotonic() - t0) * 1000.0)
             return self._resize_result(result, frame_h, frame_w)
 
@@ -125,19 +166,23 @@ class GroundSegmenter:
             obstacle_full = self._resize_mask(obstacle_full, frame_h, frame_w)
             unknown_full = self._resize_mask(unknown_full, frame_h, frame_w)
 
-        free_ratio = self._free_ratio(free_full, obstacle_full)
-        sectors = self._sector_ratios(free_full, obstacle_full)
-        heading, width = self._navigable_corridor(sectors, frame_w)
+        if self._should_use_fallback(free_full, obstacle_full, frame_shape):
+            fallback_result = self._fallback_result(
+                frame_h,
+                frame_w,
+                detections,
+                (time.monotonic() - t0) * 1000.0,
+                color_frame=color_frame,
+            )
+            if fallback_result is not None:
+                return fallback_result
 
-        return FreeSpaceResult(
-            free_mask=free_full,
-            obstacle_mask=obstacle_full,
-            unknown_mask=unknown_full,
-            free_space_ratio=free_ratio,
-            free_sectors=sectors,
-            navigable_heading=heading,
-            navigable_width=width,
-            processing_ms=(time.monotonic() - t0) * 1000.0,
+        return self._build_result(
+            free_full,
+            obstacle_full,
+            unknown_full,
+            frame_w,
+            (time.monotonic() - t0) * 1000.0,
         )
 
     def apply_to_frame(self, frame_det: Any, result: FreeSpaceResult) -> Any:
@@ -149,6 +194,7 @@ class GroundSegmenter:
         frame_det.free_sectors = result.free_sectors
         frame_det.navigable_heading = result.navigable_heading
         frame_det.navigable_width = result.navigable_width
+        frame_det.navigable_width_m = result.navigable_width_m
         frame_det.freespace_processing_ms = result.processing_ms
         return frame_det
 
@@ -185,16 +231,7 @@ class GroundSegmenter:
         unknown: np.ndarray,
         detections: Any | None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        if detections is None:
-            return free, obstacle, unknown
-
-        dets = []
-        if hasattr(detections, "persons") or hasattr(detections, "obstacles"):
-            dets.extend(getattr(detections, "persons", []) or [])
-            dets.extend(getattr(detections, "obstacles", []) or [])
-        elif isinstance(detections, (list, tuple)):
-            dets.extend(detections)
-
+        dets = self._detections_list(detections)
         if not dets:
             return free, obstacle, unknown
 
@@ -217,6 +254,36 @@ class GroundSegmenter:
 
         return free, obstacle, unknown
 
+    @staticmethod
+    def _detections_list(detections: Any | None) -> list[Any]:
+        if detections is None:
+            return []
+
+        dets = []
+        if hasattr(detections, "persons") or hasattr(detections, "obstacles"):
+            dets.extend(getattr(detections, "persons", []) or [])
+            dets.extend(getattr(detections, "obstacles", []) or [])
+        elif isinstance(detections, (list, tuple)):
+            dets.extend(detections)
+        return dets
+
+    def _detection_mask(self, shape: tuple[int, int], detections: Any | None) -> np.ndarray:
+        h, w = shape
+        mask = np.zeros((h, w), dtype=bool)
+        margin = max(0, self.safety_margin_px)
+        for det in self._detections_list(detections):
+            bbox = getattr(det, "bbox", None)
+            if bbox is None:
+                continue
+            x1, y1, x2, y2 = bbox
+            x1 = max(0, int(x1) - margin)
+            y1 = max(0, int(y1) - margin)
+            x2 = min(w, int(x2) + margin)
+            y2 = min(h, int(y2) + margin)
+            if x2 > x1 and y2 > y1:
+                mask[y1:y2, x1:x2] = True
+        return mask
+
     def _sector_ratios(self, free: np.ndarray, obstacle: np.ndarray) -> np.ndarray:
         h, w = free.shape
         sectors = np.zeros(self.sector_count, dtype=np.float32)
@@ -238,6 +305,9 @@ class GroundSegmenter:
             return 0.0, 0.0
 
         best = int(np.argmax(sectors))
+        if float(sectors[best]) < self.sector_free_threshold:
+            return 0.0, 0.0
+
         left = best
         right = best
         while left - 1 >= 0 and sectors[left - 1] >= self.sector_free_threshold:
@@ -290,6 +360,211 @@ class GroundSegmenter:
         if known_count == 0:
             return 0.0
         return float(np.count_nonzero(free) / known_count)
+
+    def _build_result(
+        self,
+        free: np.ndarray,
+        obstacle: np.ndarray,
+        unknown: np.ndarray,
+        frame_w: int,
+        processing_ms: float,
+    ) -> FreeSpaceResult:
+        width_m = self._max_free_run_width_m(free)
+        free_ratio = self._free_ratio(free, obstacle)
+        sectors = self._sector_ratios(free, obstacle)
+
+        if self.min_navigable_width_m > 0.0 and width_m < self.min_navigable_width_m:
+            sectors = np.zeros_like(sectors)
+
+        heading, width = self._navigable_corridor(sectors, frame_w)
+
+        return FreeSpaceResult(
+            free_mask=free,
+            obstacle_mask=obstacle,
+            unknown_mask=unknown,
+            free_space_ratio=free_ratio,
+            free_sectors=sectors,
+            navigable_heading=heading,
+            navigable_width=width,
+            navigable_width_m=width_m,
+            processing_ms=processing_ms,
+        )
+
+    def _should_use_fallback(
+        self,
+        free: np.ndarray,
+        obstacle: np.ndarray,
+        frame_shape: tuple[int, int] | tuple[int, int, int] | None,
+    ) -> bool:
+        if frame_shape is None:
+            return False
+        if np.any(free):
+            return False
+        total = max(1, free.size)
+        obstacle_ratio = float(np.count_nonzero(obstacle) / total)
+        return obstacle_ratio <= self.fallback_max_obstacle_ratio
+
+    def _fallback_result(
+        self,
+        h: int,
+        w: int,
+        detections: Any | None,
+        processing_ms: float,
+        color_frame: np.ndarray | None,
+    ) -> FreeSpaceResult | None:
+        if self.rgb_floor_fallback_enabled and color_frame is not None:
+            return self._rgb_floor_fallback(color_frame, detections, processing_ms)
+        if self.bbox_fallback_enabled:
+            return self._bbox_fallback(h, w, detections, processing_ms)
+        return None
+
+    def _rgb_floor_fallback(
+        self,
+        color_frame: np.ndarray,
+        detections: Any | None,
+        processing_ms: float,
+    ) -> FreeSpaceResult:
+        h, w = color_frame.shape[:2]
+        roi = self._fallback_roi_mask(h, w)
+        det_mask = self._detection_mask((h, w), detections)
+
+        lab = cv2.cvtColor(color_frame, cv2.COLOR_BGR2LAB).astype(np.float32)
+        seed = roi.copy()
+        seed[: int(round(h * (1.0 - self.floor_seed_bottom_ratio))), :] = False
+        seed[det_mask] = False
+
+        if int(np.count_nonzero(seed)) < 32:
+            return self._bbox_fallback(h, w, detections, processing_ms)
+
+        seed_pixels = lab[seed]
+        center = np.median(seed_pixels, axis=0)
+        dist = np.linalg.norm(lab - center, axis=2)
+        floor = roi & (dist <= self.floor_color_threshold)
+        floor[det_mask] = False
+
+        floor = self._clean_floor_mask(floor, seed)
+
+        free = floor.copy()
+        obstacle = np.zeros((h, w), dtype=bool)
+        unknown = np.ones((h, w), dtype=bool)
+        unknown[roi] = ~floor[roi]
+
+        free, obstacle, unknown = self._stamp_detections(
+            free,
+            obstacle,
+            unknown,
+            detections,
+        )
+
+        return self._build_result(free, obstacle, unknown, w, processing_ms)
+
+    def _bbox_fallback(
+        self,
+        h: int,
+        w: int,
+        detections: Any | None,
+        processing_ms: float,
+    ) -> FreeSpaceResult:
+        free = np.zeros((h, w), dtype=bool)
+        obstacle = np.zeros((h, w), dtype=bool)
+        unknown = np.ones((h, w), dtype=bool)
+
+        roi = self._fallback_roi_mask(h, w)
+        free[roi] = True
+        unknown[roi] = False
+
+        free, obstacle, unknown = self._stamp_detections(
+            free,
+            obstacle,
+            unknown,
+            detections,
+        )
+
+        return self._build_result(free, obstacle, unknown, w, processing_ms)
+
+    @staticmethod
+    def _clean_floor_mask(floor: np.ndarray, seed: np.ndarray) -> np.ndarray:
+        if not np.any(floor):
+            return floor
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        cleaned = cv2.morphologyEx(floor.astype(np.uint8), cv2.MORPH_OPEN, kernel, iterations=1)
+        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel, iterations=2).astype(bool)
+
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(cleaned.astype(np.uint8), 8)
+        if count <= 1:
+            return cleaned
+
+        seed_labels = np.unique(labels[seed & cleaned])
+        min_area = max(32, int(round(floor.size * 0.002)))
+        keep = np.zeros_like(cleaned)
+        for label in seed_labels:
+            if label == 0:
+                continue
+            if stats[int(label), cv2.CC_STAT_AREA] >= min_area:
+                keep |= labels == label
+        return keep if np.any(keep) else cleaned
+
+    def _max_free_run_width_m(self, free: np.ndarray) -> float:
+        h, w = free.shape
+        row0 = max(
+            int(round(h * (1.0 - self.floor_seed_bottom_ratio))),
+            int(round(self.cy + 1)),
+        )
+        row0 = int(np.clip(row0, 0, max(0, h - 1)))
+        if row0 >= h:
+            return 0.0
+
+        step = max(1, (h - row0) // 60)
+        best = 0.0
+        for y in range(row0, h, step):
+            z_m = self._ground_z_at_row(y, h)
+            if z_m is None:
+                continue
+            row = free[y, :]
+            if not np.any(row):
+                continue
+            padded = np.concatenate(([False], row, [False]))
+            changes = np.flatnonzero(padded[1:] != padded[:-1])
+            for start, end in zip(changes[0::2], changes[1::2], strict=False):
+                width_px = max(0, int(end) - int(start))
+                best = max(best, self._pixel_width_to_metres(width_px, w, z_m))
+        return float(best)
+
+    def _ground_z_at_row(self, row: int, frame_h: int) -> float | None:
+        scale_y = frame_h / max(self.cy * 2.0, 1e-6)
+        fy = self.fy * scale_y
+        cy = self.cy * scale_y
+        ray_y = (float(row) - cy) / max(fy, 1e-6)
+        denom = math.cos(self.camera_pitch_rad) * ray_y + math.sin(self.camera_pitch_rad)
+        if denom <= 1e-6:
+            return None
+        z_m = self.camera_height_m / denom
+        if not math.isfinite(z_m) or z_m <= 0.0:
+            return None
+        return float(z_m)
+
+    def _pixel_width_to_metres(self, width_px: int, frame_w: int, z_m: float) -> float:
+        scale_x = frame_w / max(self.cx * 2.0, 1e-6)
+        fx = self.fx * scale_x
+        return float(width_px) * float(z_m) / max(fx, 1e-6)
+
+    def _fallback_roi_mask(self, h: int, w: int) -> np.ndarray:
+        mask = np.zeros((h, w), dtype=np.uint8)
+        top_y = int(round(h * self.fallback_roi_top_ratio))
+        center_x = w // 2
+        top_half = int(round(w * self.fallback_roi_top_width_ratio / 2.0))
+        points = np.array(
+            [
+                [max(0, center_x - top_half), top_y],
+                [min(w - 1, center_x + top_half), top_y],
+                [w - 1, h - 1],
+                [0, h - 1],
+            ],
+            dtype=np.int32,
+        )
+        cv2.fillConvexPoly(mask, points, 1)
+        return mask.astype(bool)
 
     def _empty_unknown(self, h: int, w: int, processing_ms: float) -> FreeSpaceResult:
         free = np.zeros((h, w), dtype=bool)

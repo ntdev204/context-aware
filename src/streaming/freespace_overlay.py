@@ -28,6 +28,7 @@ def draw_freespace_overlay(
         vis,
         float(getattr(frame_det, "free_space_ratio", 0.0) or 0.0),
         float(getattr(frame_det, "navigable_width", 0.0) or 0.0),
+        float(getattr(frame_det, "navigable_width_m", 0.0) or 0.0),
     )
     return vis
 
@@ -50,8 +51,10 @@ def _blend_mask(
     vis[mask] = blended[mask]
 
 
-def _draw_freespace_text(vis: np.ndarray, ratio: float, width_rad: float) -> None:
-    text = f"FREE:{ratio * 100:.0f}% | CORRIDOR:{math.degrees(width_rad):.0f}deg"
+def _draw_freespace_text(
+    vis: np.ndarray, ratio: float, width_rad: float, width_m: float
+) -> None:
+    text = f"FREE:{ratio * 100:.0f}% | WIDTH:{width_m:.1f}m | CORRIDOR:{math.degrees(width_rad):.0f}deg"
     h, w = vis.shape[:2]
     org = (8, max(48, h - 12))
     (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 1)
