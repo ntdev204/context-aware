@@ -75,9 +75,7 @@ class GroundSegmenter:
         self.fov_rad = math.radians(float(fov_deg)) if fov_deg is not None else None
         self.bbox_fallback_enabled = bool(bbox_fallback_enabled)
         self.fallback_roi_top_ratio = float(np.clip(fallback_roi_top_ratio, 0.05, 0.95))
-        self.fallback_roi_top_width_ratio = float(
-            np.clip(fallback_roi_top_width_ratio, 0.05, 1.0)
-        )
+        self.fallback_roi_top_width_ratio = float(np.clip(fallback_roi_top_width_ratio, 0.05, 1.0))
         self.fallback_max_obstacle_ratio = float(np.clip(fallback_max_obstacle_ratio, 0.0, 1.0))
         self.rgb_floor_fallback_enabled = bool(rgb_floor_fallback_enabled)
         self.floor_color_threshold = float(max(1.0, floor_color_threshold))

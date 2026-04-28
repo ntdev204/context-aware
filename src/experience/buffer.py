@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class ExperienceBuffer:
-
     def __init__(
         self,
         max_size: int = 10_000,

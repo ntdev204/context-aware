@@ -51,9 +51,7 @@ def _blend_mask(
     vis[mask] = blended[mask]
 
 
-def _draw_freespace_text(
-    vis: np.ndarray, ratio: float, width_rad: float, width_m: float
-) -> None:
+def _draw_freespace_text(vis: np.ndarray, ratio: float, width_rad: float, width_m: float) -> None:
     text = f"FREE:{ratio * 100:.0f}% | WIDTH:{width_m:.1f}m | CORRIDOR:{math.degrees(width_rad):.0f}deg"
     h, w = vis.shape[:2]
     org = (8, max(48, h - 12))

@@ -20,7 +20,6 @@ JPEG_QUALITY = 85
 
 @dataclass
 class ExperienceFrame:
-
     frame_id: int
     timestamp: float
     wall_time: float
@@ -43,7 +42,6 @@ def _encode_action(cmd: NavigationCommand) -> np.ndarray:
 
 
 class ExperienceCollector:
-
     def __init__(
         self,
         buffer: ExperienceBuffer,

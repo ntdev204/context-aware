@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class ROISaver:
-
     def __init__(self, save_dir: str, jpeg_quality: int = 90):
         self.save_dir = Path(save_dir)
         self.jpeg_quality = jpeg_quality

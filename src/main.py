@@ -180,9 +180,7 @@ def _build_pipeline(cfg) -> dict:
             fov_deg=freespace_cfg.get("fov_deg", None),
             bbox_fallback_enabled=freespace_cfg.get("bbox_fallback_enabled", True),
             fallback_roi_top_ratio=freespace_cfg.get("fallback_roi_top_ratio", 0.45),
-            fallback_roi_top_width_ratio=freespace_cfg.get(
-                "fallback_roi_top_width_ratio", 0.35
-            ),
+            fallback_roi_top_width_ratio=freespace_cfg.get("fallback_roi_top_width_ratio", 0.35),
             fallback_max_obstacle_ratio=freespace_cfg.get("fallback_max_obstacle_ratio", 0.65),
             rgb_floor_fallback_enabled=freespace_cfg.get("rgb_floor_fallback_enabled", True),
             floor_color_threshold=freespace_cfg.get("floor_color_threshold", 48.0),
