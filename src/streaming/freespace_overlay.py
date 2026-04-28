@@ -10,8 +10,9 @@ def draw_freespace_overlay(
     frame: np.ndarray,
     frame_det,
     alpha: float = 0.30,
+    copy: bool = True,
 ) -> np.ndarray:
-    vis = frame.copy()
+    vis = frame.copy() if copy else frame
     free = getattr(frame_det, "free_mask", None)
     obstacle = getattr(frame_det, "obstacle_mask", None)
     unknown = getattr(frame_det, "unknown_mask", None)
@@ -36,7 +37,7 @@ def draw_freespace_overlay(
 def _match_mask(mask: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     h, w = shape
     if mask.shape == (h, w):
-        return mask.astype(bool)
+        return mask.astype(bool, copy=False)
     return cv2.resize(mask.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST).astype(bool)
 
 
@@ -45,10 +46,11 @@ def _blend_mask(
 ) -> None:
     if mask.size == 0 or not np.any(mask):
         return
-    color_img = np.zeros_like(vis)
-    color_img[:, :] = color
-    blended = cv2.addWeighted(vis, 1.0 - alpha, color_img, alpha, 0)
-    vis[mask] = blended[mask]
+    inv_alpha = 1.0 - alpha
+    for channel_idx, target in enumerate(color):
+        channel = vis[:, :, channel_idx]
+        values = channel[mask].astype(np.float32)
+        channel[mask] = (values * inv_alpha + target * alpha).astype(np.uint8)
 
 
 def _draw_freespace_text(vis: np.ndarray, ratio: float, width_rad: float, width_m: float) -> None:
@@ -79,9 +81,9 @@ def _draw_sector_radar(vis: np.ndarray, sectors) -> None:
     cy = y0 + size - 8
     radius = size - 18
 
-    overlay = vis.copy()
-    cv2.rectangle(overlay, (x0, y0), (x0 + size, y0 + size), (0, 0, 0), cv2.FILLED)
-    cv2.addWeighted(overlay, 0.45, vis, 0.55, 0, dst=vis)
+    panel = vis[y0 : y0 + size, x0 : x0 + size]
+    black = np.zeros_like(panel)
+    cv2.addWeighted(panel, 0.55, black, 0.45, 0, dst=panel)
 
     sector_angle = 90.0 / len(vals)
     start_angle = -135.0
