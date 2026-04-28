@@ -16,6 +16,7 @@ from src.perception.yolo_detector import (
     CLASS_NAMES,
     DetectionResult,
     FrameDetections,
+    YOLODetector,
 )
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
@@ -307,6 +308,23 @@ class TestGroundSegmenter:
         heading, width = seg._navigable_corridor(np.full(8, 0.10, dtype=np.float32), 160)
         assert heading == 0.0
         assert width == 0.0
+
+
+class TestYOLODepthRange:
+    def test_depth_distance_uses_two_to_eight_metre_range(self):
+        depth = np.full((40, 40), 3000, dtype=np.uint16)
+
+        distance, source = YOLODetector._estimate_distance(10, 10, 30, 30, 40, 40, "person", depth)
+
+        assert source == "depth"
+        assert distance == 3.0
+
+    def test_depth_distance_ignores_blind_zone_under_two_metres(self):
+        depth = np.full((40, 40), 1500, dtype=np.uint16)
+
+        _, source = YOLODetector._estimate_distance(10, 10, 30, 30, 40, 40, "person", depth)
+
+        assert source == "bbox"
 
 
 # ── CNN Intent Model ─────────────────────────────────────────────────────────

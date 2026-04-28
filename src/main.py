@@ -169,8 +169,8 @@ def _build_pipeline(cfg) -> dict:
             cy=freespace_cfg.get("cy", 240.0),
             camera_height_m=freespace_cfg.get("camera_height_m", 0.50),
             camera_pitch_deg=freespace_cfg.get("camera_pitch_deg", 0.0),
-            depth_min_mm=freespace_cfg.get("depth_min_mm", 400),
-            depth_max_mm=freespace_cfg.get("depth_max_mm", 2000),
+            depth_min_mm=freespace_cfg.get("depth_min_mm", 2000),
+            depth_max_mm=freespace_cfg.get("depth_max_mm", 8000),
             downscale=freespace_cfg.get("downscale", 4),
             ground_tolerance_m=freespace_cfg.get("ground_tolerance_m", 0.08),
             obstacle_height_m=freespace_cfg.get("obstacle_height_m", 0.10),
@@ -186,7 +186,7 @@ def _build_pipeline(cfg) -> dict:
             rgb_floor_fallback_enabled=freespace_cfg.get("rgb_floor_fallback_enabled", True),
             floor_color_threshold=freespace_cfg.get("floor_color_threshold", 48.0),
             floor_seed_bottom_ratio=freespace_cfg.get("floor_seed_bottom_ratio", 0.22),
-            near_floor_blind_distance_m=freespace_cfg.get("near_floor_blind_distance_m", 0.0),
+            near_floor_blind_distance_m=freespace_cfg.get("near_floor_blind_distance_m", 2.0),
             min_navigable_width_m=freespace_cfg.get("min_navigable_width_m", 1.0),
         )
         if freespace_enabled

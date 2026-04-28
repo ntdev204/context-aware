@@ -40,8 +40,8 @@ class GroundSegmenter:
         cy: float = 240.0,
         camera_height_m: float = 0.50,
         camera_pitch_deg: float = 0.0,
-        depth_min_mm: int = 400,
-        depth_max_mm: int = 2000,
+        depth_min_mm: int = 2000,
+        depth_max_mm: int = 8000,
         downscale: int = 4,
         ground_tolerance_m: float = 0.08,
         obstacle_height_m: float = 0.10,
@@ -57,7 +57,7 @@ class GroundSegmenter:
         rgb_floor_fallback_enabled: bool = True,
         floor_color_threshold: float = 48.0,
         floor_seed_bottom_ratio: float = 0.22,
-        near_floor_blind_distance_m: float = 0.0,
+        near_floor_blind_distance_m: float = 2.0,
         min_navigable_width_m: float = 1.0,
     ) -> None:
         self.fx = float(fx)

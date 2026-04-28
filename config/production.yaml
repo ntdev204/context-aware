@@ -49,8 +49,8 @@ perception:
     cy: 240.0
     camera_height_m: 0.50
     camera_pitch_deg: 0.0
-    depth_min_mm: 400
-    depth_max_mm: 5000
+    depth_min_mm: 2000
+    depth_max_mm: 8000
     downscale: 4
     ground_tolerance_m: 0.08
     obstacle_height_m: 0.10
