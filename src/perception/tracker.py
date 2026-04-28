@@ -1,9 +1,3 @@
-"""ByteTrack-based multi-object tracker for stable track_id assignment.
-
-Primary backend: supervision.ByteTrack (pip install supervision).
-Fallback: minimal IoU tracker with min_hits warm-up to suppress ghost tracks.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -14,13 +8,12 @@ from .yolo_detector import DetectionResult, FrameDetections
 
 logger = logging.getLogger(__name__)
 
-# Prefer supervision.ByteTrack — works with any ultralytics version.
 try:
     import supervision as sv
 
     _HAS_SUPERVISION = True
     logger.info("ByteTrack backend: supervision.ByteTrack")
-except ImportError:  # pragma: no cover
+except ImportError:
     _HAS_SUPERVISION = False
     logger.warning(
         "supervision not installed — using fallback IoU tracker. Run: pip install supervision"
@@ -28,12 +21,6 @@ except ImportError:  # pragma: no cover
 
 
 class _FallbackTracker:
-    """Minimal IoU tracker with min_hits warm-up (used when supervision is unavailable).
-
-    A detection must be matched at least *min_hits* consecutive frames before
-    its track_id is exposed — this suppresses ghost tracks from single-frame
-    noise, matching ByteTrack's behaviour.
-    """
 
     def __init__(
         self,
@@ -44,7 +31,6 @@ class _FallbackTracker:
         self.max_age = max_age
         self.min_hits = min_hits
         self.iou_threshold = iou_threshold
-        # track entry: {"bbox", "age", "hits"}
         self._tracks: dict[int, dict] = {}
         self._next_id = 1
 
@@ -74,7 +60,6 @@ class _FallbackTracker:
                 self._tracks[best_id]["age"] = 0
                 self._tracks[best_id]["hits"] += 1
                 matched_ids.add(best_id)
-                # Only expose track_id once the track is confirmed
                 if self._tracks[best_id]["hits"] >= self.min_hits:
                     det.track_id = best_id
             else:
@@ -108,7 +93,6 @@ class _FallbackTracker:
 
 
 class Tracker:
-    """Wraps supervision.ByteTrack (preferred) or IoU fallback to assign stable track_ids."""
 
     def __init__(
         self,
@@ -137,7 +121,6 @@ class Tracker:
         )
 
     def update(self, frame_det: FrameDetections, frame_shape: tuple) -> FrameDetections:
-        """Assign track_ids to all person detections in *frame_det*."""
         if not frame_det.persons:
             return frame_det
 
@@ -146,7 +129,6 @@ class Tracker:
         else:
             frame_det.persons = self._impl.update(frame_det.persons)
 
-        # Mirror confirmed track_ids into all_detections list
         person_tracks = {d.bbox: d.track_id for d in frame_det.persons}
         for det in frame_det.all_detections:
             if det.class_name == "person":
@@ -155,7 +137,6 @@ class Tracker:
         return frame_det
 
     def _update_supervision(self, persons: list[DetectionResult]) -> list[DetectionResult]:
-        """Use supervision.ByteTrack — accepts sv.Detections natively."""
         xyxy = np.array([list(d.bbox) for d in persons], dtype=np.float32)
         confs = np.array([d.confidence for d in persons], dtype=np.float32)
         class_ids = np.array([d.class_id for d in persons], dtype=int)

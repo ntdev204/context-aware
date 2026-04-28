@@ -1,19 +1,3 @@
-"""CRITICAL: Data Logging Pipeline (Bottleneck C1).
-
-ExperienceCollector gathers EVERY field needed for RL training per frame:
-    raw_image       JPEG bytes  quality ≥ 85
-    detections      list        from YOLO + tracker
-    intent_preds    list        from CNN
-    observation     np.ndarray  104-float vector (OBS_DIM=104)
-    action          np.ndarray  7-float vector
-    robot_state     RobotState  from ZMQ
-    timestamp       float64     time.monotonic() for ordering
-    frame_id        int         global sequential counter
-
-All fields share the SAME timestamp to guarantee alignment.
-Writing is async (pushed to ExperienceBuffer, written by a daemon thread).
-"""
-
 from __future__ import annotations
 
 import logging
@@ -36,22 +20,20 @@ JPEG_QUALITY = 85
 
 @dataclass
 class ExperienceFrame:
-    """One fully-aligned data record per inference frame."""
 
     frame_id: int
-    timestamp: float  # time.monotonic()
-    wall_time: float  # time.time() for human readability
-    raw_image_jpeg: bytes  # JPEG compressed
+    timestamp: float
+    wall_time: float
+    raw_image_jpeg: bytes
     detections: FrameDetections
     intent_predictions: list[IntentPrediction]
-    observation: np.ndarray  # shape (104*k,)  — OBS_DIM=104
-    action: np.ndarray  # shape (7,) = [v_scale, h_offset, mode_oh×5]
+    observation: np.ndarray
+    action: np.ndarray
     robot_state: RobotState
     session_id: str = ""
 
 
 def _encode_action(cmd: NavigationCommand) -> np.ndarray:
-    """Flatten NavigationCommand into a 7-float vector."""
     mode_oh = np.zeros(5, dtype=np.float32)
     mode_oh[int(cmd.mode)] = 1.0
     return np.array(
@@ -61,7 +43,6 @@ def _encode_action(cmd: NavigationCommand) -> np.ndarray:
 
 
 class ExperienceCollector:
-    """Collects and enqueues experience frames for async HDF5 storage."""
 
     def __init__(
         self,
@@ -77,9 +58,6 @@ class ExperienceCollector:
         self._frame_id = 0
         self._dropped = 0
 
-    # ------------------------------------------------------------------
-    # Main collection entry-point (called every inference frame)
-    # ------------------------------------------------------------------
     def collect(
         self,
         raw_frame: np.ndarray,
@@ -95,7 +73,6 @@ class ExperienceCollector:
         ts = time.monotonic()
         wall = time.time()
 
-        # JPEG compress
         ok, buf = cv2.imencode(".jpg", raw_frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
         if not ok:
             logger.warning("JPEG encode failed, frame %d skipped", self._frame_id)
@@ -118,7 +95,6 @@ class ExperienceCollector:
 
         self._frame_id += 1
 
-        # Non-blocking push to ring buffer
         if not self._buffer.push(exp):
             self._dropped += 1
             if self._dropped % 100 == 0:

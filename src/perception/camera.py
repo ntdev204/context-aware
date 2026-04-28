@@ -1,13 +1,3 @@
-"""Thread-safe camera capture with double buffering.
-
-Supports two backends:
-  - "usb"   : standard OpenCV USB/CSI camera (RGB only)
-  - "astra" : Orbbec Astra S via OpenNI2 (RGB + depth uint16 mm)
-
-grab() always returns Tuple[np.ndarray | None, np.ndarray | None]
-  (rgb_frame, depth_frame) -- depth_frame is None when unavailable
-"""
-
 from __future__ import annotations
 
 import logging
@@ -21,11 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class Camera:
-    """Captures frames from CSI, USB, or Astra S camera in a background thread.
-
-    Uses double-buffering: producer writes to back-buffer, consumer reads
-    from front-buffer — no blocking between capture and inference.
-    """
 
     def __init__(
         self,
@@ -41,26 +26,21 @@ class Camera:
         self.height = height
         self.fps = fps
 
-        # "astra" backend streams both RGB and uint16 depth via OpenNI2
         self._has_depth: bool = backend == "astra"
 
         self._cap: cv2.VideoCapture | None = None
         self._frame: np.ndarray | None = None
-        self._depth_frame: np.ndarray | None = None  # uint16, millimetres
+        self._depth_frame: np.ndarray | None = None
         self._lock = threading.Lock()
         self._running = False
         self._thread: threading.Thread | None = None
         self._frame_count = 0
 
-        # OpenNI2 device handles (populated in start() for astra backend)
         self._oni_device = None
         self._oni_depth_stream = None
         self._oni_color_stream = None
-        self._openni2 = None  # cached module reference — set in _open_astra()
+        self._openni2 = None
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
     def start(self) -> None:
         if self._has_depth:
             self._open_astra()
@@ -69,7 +49,6 @@ class Camera:
 
         self._running = True
 
-        # No camera available after all fallbacks — run null loop
         if self._cap is None and not self._has_depth:
             logger.warning("No camera available — publishing null frames")
             self._thread = threading.Thread(target=self._null_loop, daemon=True)
@@ -80,7 +59,6 @@ class Camera:
         self._thread = threading.Thread(target=target, daemon=True)
         self._thread.start()
 
-        # Wait for first RGB frame
         deadline = time.monotonic() + 5.0
         while self._frame is None and time.monotonic() < deadline:
             time.sleep(0.05)
@@ -99,7 +77,6 @@ class Camera:
         self._running = False
         if self._thread:
             self._thread.join(timeout=2.0)
-        # Release OpenNI2 streams if used
         if self._oni_depth_stream is not None:
             self._oni_depth_stream.stop()
         if self._oni_color_stream is not None:
@@ -110,15 +87,7 @@ class Camera:
             self._cap.release()
         logger.info("Camera stopped")
 
-    # ------------------------------------------------------------------
-    # Frame access
-    # ------------------------------------------------------------------
     def grab(self) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """Return (rgb_frame, depth_frame) — depth is None when unavailable.
-
-        rgb_frame  : BGR uint8 numpy array, or None if camera not ready.
-        depth_frame: uint16 numpy array in millimetres, or None.
-        """
         with self._lock:
             rgb = self._frame.copy() if self._frame is not None else None
             depth = self._depth_frame.copy() if self._depth_frame is not None else None
@@ -128,9 +97,6 @@ class Camera:
     def frame_count(self) -> int:
         return self._frame_count
 
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
     def _open_capture(self) -> cv2.VideoCapture:
         if self.backend == "csi":
             pipeline = self._gstreamer_csi_pipeline()
@@ -147,7 +113,6 @@ class Camera:
         return cap
 
     def _capture_loop(self) -> None:
-        """Standard OpenCV capture loop (USB / CSI backends)."""
         interval = 1.0 / self.fps
         while self._running:
             t0 = time.monotonic()
@@ -167,7 +132,6 @@ class Camera:
                 time.sleep(sleep)
 
     def _null_loop(self) -> None:
-        """Produce black frames when no camera hardware is available."""
         interval = 1.0 / self.fps
         black = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         while self._running:
@@ -176,12 +140,7 @@ class Camera:
                 self._frame_count += 1
             time.sleep(interval)
 
-    # ------------------------------------------------------------------
-    # Astra S (OpenNI2) helpers
-    # ------------------------------------------------------------------
     def _open_astra(self) -> None:
-        """Initialise OpenNI2 and open colour + depth streams."""
-        # Guard: OpenNI2 is not available on Windows — fall back silently
         import platform
 
         if platform.system() == "Windows":
@@ -193,16 +152,14 @@ class Camera:
         try:
             import os as _os
 
-            from openni import openni2  # type: ignore[import]
+            from openni import openni2
 
             self._openni2 = openni2
 
-            # Orbbec official OpenNI2 binaries extracted to /usr/lib
             _redist = "/usr/lib"
             openni2.initialize(_redist if _os.path.isdir(_redist) else None)
             self._oni_device = openni2.Device.open_any()
 
-            # Depth stream — uint16 mm
             self._oni_depth_stream = self._oni_device.create_depth_stream()
             self._oni_depth_stream.set_video_mode(
                 openni2.c_api.OniVideoMode(
@@ -214,7 +171,6 @@ class Camera:
             )
             self._oni_depth_stream.start()
 
-            # Colour stream — BGR via OpenCV
             self._oni_color_stream = self._oni_device.create_color_stream()
             self._oni_color_stream.set_video_mode(
                 openni2.c_api.OniVideoMode(
@@ -226,7 +182,6 @@ class Camera:
             )
             self._oni_color_stream.start()
 
-            # Align depth pixels to colour frame coordinates (Astra S hardware feature)
             try:
                 self._oni_device.set_image_registration_mode(
                     openni2.IMAGE_REGISTRATION_DEPTH_TO_COLOR
@@ -240,10 +195,9 @@ class Camera:
             logger.info("Astra S OpenNI2 streams opened (%dx%d)", self.width, self.height)
 
         except Exception as exc:
-            # Gracefully degrade to no-depth if OpenNI2 fails
             logger.warning("Astra OpenNI2 init failed (%s) — falling back to USB rgb-only", exc)
             self._has_depth = False
-            self.backend = "usb"  # switch away from 'astra' so _open_capture uses V4L2
+            self.backend = "usb"
             try:
                 self._cap = self._open_capture()
             except RuntimeError as cam_exc:
@@ -251,16 +205,10 @@ class Camera:
                 self._cap = None
 
     def _astra_capture_loop(self) -> None:
-        """Capture loop for Astra S — reads RGB and depth independently.
-
-        Depth failure per-frame does NOT kill the RGB stream; it simply
-        results in depth_frame=None for that frame.
-        """
         interval = 1.0 / self.fps
         while self._running:
             t0 = time.monotonic()
 
-            # --- RGB (use cached module — no per-frame import) ---
             try:
                 color_frame = self._oni_color_stream.read_frame()
                 rgb_buf = np.frombuffer(color_frame.get_buffer_as_uint8(), dtype=np.uint8)
@@ -268,9 +216,8 @@ class Camera:
             except Exception as exc:
                 logger.warning("Astra RGB read failed: %s", exc)
                 time.sleep(0.1)
-                continue  # RGB failure → skip frame entirely
+                continue
 
-            # --- Depth (isolated try/except — failure yields None) ---
             depth: np.ndarray | None = None
             try:
                 depth_frame = self._oni_depth_stream.read_frame()

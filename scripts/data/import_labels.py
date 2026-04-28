@@ -1,16 +1,3 @@
-"""Import human-annotated datasets from Label Studio or Roboflow.
-
-Reads a standard YOLO formatted export and imports into intent_dataset/human/
-
-Expected input structure (Label Studio YOLO format):
-export_dir/
-├── images/
-│   ├── roi_...jpg
-└── labels/
-    ├── roi_...txt  (class_id cx cy w h)
-    └── classes.txt (list of class names)
-"""
-
 import argparse
 import shutil
 from pathlib import Path
@@ -29,13 +16,11 @@ def import_dataset(export_dir: Path, output_dir: Path) -> None:
         print("[-] 'classes.txt' not found in labels directory. Cannot map class IDs.")
         return
 
-    # Load classes
     with open(classes_file, encoding="utf-8") as f:
         classes = [line.strip() for line in f if line.strip()]
 
     print(f"[*] Found {len(classes)} classes: {classes}")
 
-    # Process images
     images = list(images_dir.glob("*.jpg"))
     print(f"[*] Found {len(images)} images to import.")
 
@@ -53,7 +38,6 @@ def import_dataset(export_dir: Path, output_dir: Path) -> None:
         if not lines:
             continue
 
-        # For intent classification from ROI, we just take the first bounding box's class
         first_line = lines[0].strip()
         if not first_line:
             continue
@@ -67,11 +51,9 @@ def import_dataset(export_dir: Path, output_dir: Path) -> None:
 
         class_name = classes[class_id]
 
-        # Save to output_dir/class_name/img.jpg
         class_dir = output_dir / class_name
         class_dir.mkdir(exist_ok=True)
 
-        # Prefix with human_ to avoid clashes and mark origin
         dest_path = class_dir / f"human_{img_path.name}"
         shutil.copy2(img_path, dest_path)
         imported += 1

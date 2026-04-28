@@ -1,14 +1,3 @@
-"""Thread-safe ring buffer for experience frames.
-
-Producer: main inference thread (push)
-Consumer: async writer thread (pop_batch) + Phase 2 gRPC streamer
-
-Design:
-- Fixed-capacity deque (drops OLDEST when full — we prefer recent data)
-- Lock-based thread safety (GIL + lock is sufficient for 30 Hz workload)
-- Async HDF5 writer runs in daemon thread to avoid blocking inference
-"""
-
 from __future__ import annotations
 
 import gc
@@ -22,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class ExperienceBuffer:
-    """In-memory ring buffer with async HDF5 flush to disk."""
 
     def __init__(
         self,
@@ -47,9 +35,6 @@ class ExperienceBuffer:
         self._written_count = 0
         self._dropped_count = 0
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
     def start(self) -> None:
         self.write_dir.mkdir(parents=True, exist_ok=True)
         if self.async_write:
@@ -66,11 +51,7 @@ class ExperienceBuffer:
             self._write_thread.join(timeout=5.0)
         logger.info("ExperienceBuffer stopped (written=%d)", self._written_count)
 
-    # ------------------------------------------------------------------
-    # Producer API   (main inference thread)
-    # ------------------------------------------------------------------
     def push(self, frame) -> bool:
-        """Push one ExperienceFrame. Returns False if buffer was full (overflow)."""
         was_full = False
         with self._lock:
             if len(self._buf) >= self.max_size:
@@ -84,11 +65,7 @@ class ExperienceBuffer:
 
         return not was_full
 
-    # ------------------------------------------------------------------
-    # Consumer API   (gRPC streamer, Phase 2+)
-    # ------------------------------------------------------------------
     def pop_batch(self, n: int = 32):
-        """Pop up to n frames from the ring buffer (for streaming)."""
         with self._lock:
             batch = []
             for _ in range(min(n, len(self._buf))):
@@ -99,9 +76,6 @@ class ExperienceBuffer:
         with self._lock:
             return len(self._buf)
 
-    # ------------------------------------------------------------------
-    # Writer thread
-    # ------------------------------------------------------------------
     def _writer_loop(self) -> None:
         while self._running or self._pending:
             batch = []
@@ -128,8 +102,6 @@ class ExperienceBuffer:
         session_id = batch[0].session_id or "default"
         fname = self.write_dir / f"session_{session_id}.h5"
 
-        # Pre-materialise all Python objects before opening HDF5 to prevent
-        # GC collecting objects while h5py C layer holds their raw pointers.
         records = []
         for frame in batch:
             rs = frame.robot_state
@@ -168,13 +140,11 @@ class ExperienceBuffer:
                 }
             )
 
-        # Disable GC during h5py critical section to prevent segfault with raw C pointers.
         gc_was_enabled = gc.isenabled()
         gc.disable()
         try:
             str_dtype = h5py.string_dtype(encoding="utf-8")
 
-            # locking=True → HDF5 library's built-in POSIX file locking.
             with h5py.File(fname, "a", locking=True) as f:
                 for rec in records:
                     grp_name = rec["grp_name"]
@@ -210,7 +180,6 @@ class ExperienceBuffer:
                 gc.enable()
 
     def _write_directory(self, batch: list) -> None:
-        """Fallback: write each frame as separate JPEG + JSON."""
         import json
 
         for frame in batch:

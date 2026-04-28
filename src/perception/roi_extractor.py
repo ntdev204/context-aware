@@ -1,5 +1,3 @@
-"""Crops person ROIs from frames for CNN intent prediction input."""
-
 from __future__ import annotations
 
 import logging
@@ -18,15 +16,14 @@ CNN_INPUT_H = 256
 
 @dataclass
 class PersonROI:
-    image: np.ndarray  # shape (CNN_INPUT_H, CNN_INPUT_W, 3), BGR
-    bbox: tuple[int, int, int, int]  # original bbox in full frame
+    image: np.ndarray
+    bbox: tuple[int, int, int, int]
     track_id: int
-    relative_position: tuple[float, float]  # (cx_norm, cy_norm) in [0-1]
-    distance_estimate: float = 0.0  # deprecated: use DetectionResult.distance
+    relative_position: tuple[float, float]
+    distance_estimate: float = 0.0
 
 
 class ROIExtractor:
-    """Extracts and normalises person ROIs for batch CNN inference."""
 
     def __init__(
         self,
@@ -39,7 +36,6 @@ class ROIExtractor:
         self.padding_ratio = padding_ratio
 
     def extract(self, frame: np.ndarray, frame_det: FrameDetections) -> list[PersonROI]:
-        """Return a PersonROI for every tracked person in *frame_det*."""
         h, w = frame.shape[:2]
         rois: list[PersonROI] = []
 
@@ -79,7 +75,6 @@ class ROIExtractor:
             crop, (self.output_width, self.output_height), interpolation=cv2.INTER_LINEAR
         )
 
-        # Normalised centre position relative to frame
         cx_norm = ((x1 + x2) / 2.0) / frame_w
         cy_norm = ((y1 + y2) / 2.0) / frame_h
 
