@@ -1,5 +1,3 @@
-"""Daemon thread to save ROI images for pure data collection mode."""
-
 import logging
 import queue
 import threading
@@ -13,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class ROISaver:
-    """Saves ROI images asynchronously to avoid blocking main thread."""
 
     def __init__(self, save_dir: str, jpeg_quality: int = 90):
         self.save_dir = Path(save_dir)
@@ -38,10 +35,8 @@ class ROISaver:
         if not self._running or not rois:
             return
 
-        # Snapshot necessary info
         roi_data = []
         for r in rois:
-            # Lưu người mới xuất hiện ngay lập tức, hoặc người cũ sau mỗi 15 frames (~2 ảnh/giây)
             if not hasattr(self, "_last_saved"):
                 self._last_saved = {}
 
@@ -56,14 +51,13 @@ class ROISaver:
         try:
             self._queue.put_nowait((frame_id, roi_data))
         except queue.Full:
-            pass  # Drop if saving is too slow
+            pass
 
     def _worker(self):
         while self._running:
             try:
                 frame_id, roi_data = self._queue.get(timeout=0.1)
                 for track_id, img_array in roi_data:
-                    # Tên file gom track_id & frame_id. Đuôi .jpg
                     filepath = self.save_dir / f"roi_t{track_id}_f{frame_id:06d}.jpg"
                     cv2.imwrite(
                         str(filepath), img_array, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality]
