@@ -11,6 +11,7 @@ is notified automatically.
 from __future__ import annotations
 
 import logging
+import struct
 import threading
 import time
 from collections.abc import Callable
@@ -18,7 +19,6 @@ from collections.abc import Callable
 import zmq
 
 from ..navigation.context_builder import RobotState
-import struct
 
 try:
     from .proto import messages_pb2 as pb
@@ -170,10 +170,15 @@ class ZMQSubscriber:
 
         # Fallback to struct unpack if data is 52 bytes: 11 floats (44 bytes) + 1 double (8 bytes)
         if len(data) == 52:
-            vx, vy, vtheta, px, py, ptheta, batt, _df, _dr, _dl, _dri, ts = struct.unpack("!11fd", data)
+            vx, vy, vtheta, px, py, ptheta, batt, _df, _dr, _dl, _dri, ts = struct.unpack(
+                "!11fd", data
+            )
             return RobotState(
-                vx=vx, vy=vy, vtheta=vtheta,
-                pos_x=px, pos_y=py,
+                vx=vx,
+                vy=vy,
+                vtheta=vtheta,
+                pos_x=px,
+                pos_y=py,
                 battery_percent=batt,
                 nav2_status="idle",
                 timestamp=ts,

@@ -26,7 +26,7 @@ MODE_NAMES = {m: m.name for m in NavigationMode}
 class NavigationCommand:
     mode: NavigationMode = NavigationMode.STOP
     velocity_scale: float = 0.0  # [-1.0, 1.0] — âm = lùi, dương = tiến (Linear X)
-    velocity_y: float = 0.0      # [-1.0, 1.0] — âm = phải, dương = trái (Linear Y - Mecanum)
+    velocity_y: float = 0.0  # [-1.0, 1.0] — âm = phải, dương = trái (Linear Y - Mecanum)
     heading_offset: float = 0.0  # radians [-π/4, π/4] (Angular Z)
     follow_target_id: int = -1  # track_id to follow
     confidence: float = 1.0  # policy confidence [0, 1]
@@ -34,7 +34,9 @@ class NavigationCommand:
     timestamp: float = field(default_factory=time.time)
 
     def is_safe_to_move(self) -> bool:
-        return self.mode != NavigationMode.STOP and (self.velocity_scale != 0.0 or self.velocity_y != 0.0)
+        return self.mode != NavigationMode.STOP and (
+            self.velocity_scale != 0.0 or self.velocity_y != 0.0
+        )
 
     def __repr__(self) -> str:
         return (

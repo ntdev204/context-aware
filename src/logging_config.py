@@ -187,8 +187,6 @@ def _setup_production(log_dir: Path, cfg) -> None:
         comp_logger.propagate = True  # still reaches root (errors.log + console)
         comp_logger.addHandler(_rotating_handler(log_path, level))
 
-
-
     # Suppress API / streaming access logs
     for name in ("src.api", "src.streaming"):
         logging.getLogger(name).setLevel(logging.WARNING)

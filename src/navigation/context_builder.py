@@ -6,7 +6,7 @@ CRITICAL DESIGN RULE (Bottleneck B1):
     and get_stacked_observation() API are already in place so Phase 2
     can flip k→3 in config with ZERO code changes.
 
-Observation vector layout (104 floats when k=1):
+Observation vector layout (114 floats when k=1):
     [0]      num_persons               (float, 0-10 normalised)
     [1]      nearest_person_distance   (float, metres, clamped 0-5)
     [2]      nearest_person_angle      (float, radians)
@@ -17,6 +17,9 @@ Observation vector layout (104 floats when k=1):
     [70-93]  person_intents            (3 persons × 8 features)
     [94-96]  robot_velocity            (vx, vy, vθ)
     [97-103] previous_action           (velocity_scale, heading_offset, mode×5 one-hot)
+    [104-111] camera_free_sectors      (8 left-to-right camera-FOV ratios)
+    [112]    navigable_heading         (normalised by π/4)
+    [113]    navigable_width           (normalised by π/2)
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from .nav_command import NavigationCommand
 
 logger = logging.getLogger(__name__)
 
-OBS_DIM = 104
+OBS_DIM = 114
 GRID_SIZE = 8  # 8×8 occupancy grid
 MAX_PERSONS = 3  # top-k persons included in observation
 INTENT_FEATS = 8  # 6 intent probs + dx + dy per person
@@ -70,7 +73,7 @@ class ContextBuilder:
     def __init__(
         self,
         temporal_stack_size: int = 1,
-        state_version: str = "v1-snapshot",
+        state_version: str = "v2-camera-freespace",
         occupancy_grid_size: int = GRID_SIZE,
     ) -> None:
         self.temporal_stack_size = temporal_stack_size
@@ -182,6 +185,16 @@ class ContextBuilder:
             mode_oh = np.zeros(NUM_MODES, dtype=np.float32)
             mode_oh[int(self._prev_action.mode)] = 1.0
             obs[99:104] = mode_oh
+
+        # -- Camera free-space geometry [104:114] --------------------
+        sectors = frame_det.free_sectors
+        if sectors is not None:
+            sectors_arr = np.asarray(sectors, dtype=np.float32).reshape(-1)
+            n = min(8, sectors_arr.size)
+            obs[104 : 104 + n] = np.clip(sectors_arr[:n], 0.0, 1.0)
+
+        obs[112] = float(np.clip(frame_det.navigable_heading / (math.pi / 4), -1.0, 1.0))
+        obs[113] = float(np.clip(frame_det.navigable_width / (math.pi / 2), 0.0, 1.0))
 
         return obs
 

@@ -1,12 +1,3 @@
-"""CRITICAL tests for data logging pipeline (Bottleneck C1).
-
-Tests verify:
-- All required fields present per frame
-- Timestamp alignment (same ts across all fields)
-- Ring buffer overflow behaviour
-- Data replayability (write → read → verify)
-"""
-
 from __future__ import annotations
 
 import tempfile
@@ -18,12 +9,10 @@ import pytest
 
 from src.experience.buffer import ExperienceBuffer
 from src.experience.collector import ExperienceCollector, _encode_action
-from src.navigation.context_builder import RobotState
+from src.navigation.context_builder import OBS_DIM, RobotState
 from src.navigation.nav_command import NavigationCommand, NavigationMode
 from src.perception.intent_cnn import INTENT_NAMES, STATIONARY, IntentPrediction
 from src.perception.yolo_detector import FrameDetections
-
-# ── Fixtures ─────────────────────────────────────────────────────────────────
 
 
 def make_frame_image():
@@ -62,11 +51,8 @@ def make_intent_pred(track_id=1):
     )
 
 
-def make_observation(dim=102):
+def make_observation(dim=OBS_DIM):
     return np.random.rand(dim).astype(np.float32)
-
-
-# ── Action Encoding ───────────────────────────────────────────────────────────
 
 
 class TestActionEncoding:
@@ -91,9 +77,6 @@ class TestActionEncoding:
             assert mode_oh.sum() == 1.0
 
 
-# ── ExperienceBuffer ─────────────────────────────────────────────────────────
-
-
 class TestExperienceBuffer:
     def test_push_and_len(self):
         buf = ExperienceBuffer(max_size=100, async_write=False)
@@ -106,7 +89,6 @@ class TestExperienceBuffer:
         for i in range(10):
             buf.push(i)
         assert len(buf) == 5
-        # Most recent 5 should be 5-9
         batch = buf.pop_batch(5)
         assert batch[-1] == 9
 
@@ -118,7 +100,6 @@ class TestExperienceBuffer:
         assert len(batch) == 8
 
     def test_thread_safety(self):
-        """Push from multiple threads — no crash, count correct."""
         import threading
 
         buf = ExperienceBuffer(max_size=10_000, async_write=False)
@@ -147,7 +128,7 @@ class TestExperienceBuffer:
         assert result is False
 
     def test_hdf5_write_creates_file(self):
-        pytest.importorskip("h5py")  # skip if h5py not installed
+        pytest.importorskip("h5py")
         with tempfile.TemporaryDirectory() as tmpdir:
             buf = ExperienceBuffer(
                 max_size=100,
@@ -167,15 +148,11 @@ class TestExperienceBuffer:
                     cmd=make_nav_cmd(),
                     robot_state=make_robot_state(),
                 )
-            # Manually flush pending writes
             buf._write_hdf5(buf._pending)
             buf.stop()
 
             h5_files = list(Path(tmpdir).glob("*.h5"))
             assert len(h5_files) >= 1
-
-
-# ── ExperienceCollector ───────────────────────────────────────────────────────
 
 
 class TestExperienceCollector:
@@ -196,7 +173,7 @@ class TestExperienceCollector:
         assert exp is not None
         assert exp.frame_id == 0
         assert exp.raw_image_jpeg is not None and len(exp.raw_image_jpeg) > 0
-        assert exp.observation.shape == (102,)
+        assert exp.observation.shape == (OBS_DIM,)
         assert exp.action.shape == (7,)
         assert exp.timestamp > 0
         assert exp.wall_time > 0
@@ -204,7 +181,6 @@ class TestExperienceCollector:
         assert len(exp.intent_predictions) == 1
 
     def test_timestamp_alignment(self):
-        """frame_id, timestamp, wall_time all from the same collect() call."""
         collector, _ = self._make_collector()
         t_before = time.monotonic()
         exp = collector.collect(
@@ -241,7 +217,6 @@ class TestExperienceCollector:
             cmd=make_nav_cmd(),
             robot_state=make_robot_state(),
         )
-        # Quality 85 JPEG of a 640x480 random image — should be > 10KB
         assert len(exp.raw_image_jpeg) > 10_000
 
     def test_disabled_returns_none(self):
