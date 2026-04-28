@@ -32,7 +32,6 @@ from .navigation import (
     HeuristicPolicy,
     NavigationMode,
     RobotState,
-    SafetyMonitor,
 )
 from .perception import (
     Camera,
