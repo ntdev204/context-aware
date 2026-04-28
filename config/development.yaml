@@ -43,8 +43,8 @@ perception:
     cy: 240.0
     camera_height_m: 0.50
     camera_pitch_deg: 0.0
-    depth_min_mm: 400
-    depth_max_mm: 2000
+    depth_min_mm: 2000
+    depth_max_mm: 8000
     downscale: 4
     ground_tolerance_m: 0.08
     obstacle_height_m: 0.10
@@ -55,9 +55,11 @@ perception:
     fallback_roi_top_ratio: 0.45
     fallback_roi_top_width_ratio: 0.35
     fallback_max_obstacle_ratio: 0.65
+    rgb_floor_fusion_enabled: true
     rgb_floor_fallback_enabled: true
     floor_color_threshold: 48.0
     floor_seed_bottom_ratio: 0.22
+    near_floor_blind_distance_m: 2.0
     min_navigable_width_m: 1.0
 
   tracker:

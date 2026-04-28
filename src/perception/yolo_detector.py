@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 # Astra S valid depth range in millimetres
-_DEPTH_MIN_MM: float = 400.0
-_DEPTH_MAX_MM: float = 2000.0
+_DEPTH_MIN_MM: float = 2000.0
+_DEPTH_MAX_MM: float = 8000.0
 _DEPTH_MIN_VALID_PIXELS: int = 5  # minimum pixels in ROI that must be valid
 _DEPTH_ROI_HALF: int = 5  # half-size of 10×10 sampling window
 

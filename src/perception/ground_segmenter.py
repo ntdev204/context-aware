@@ -40,8 +40,8 @@ class GroundSegmenter:
         cy: float = 240.0,
         camera_height_m: float = 0.50,
         camera_pitch_deg: float = 0.0,
-        depth_min_mm: int = 400,
-        depth_max_mm: int = 2000,
+        depth_min_mm: int = 2000,
+        depth_max_mm: int = 8000,
         downscale: int = 4,
         ground_tolerance_m: float = 0.08,
         obstacle_height_m: float = 0.10,
@@ -53,9 +53,11 @@ class GroundSegmenter:
         fallback_roi_top_ratio: float = 0.45,
         fallback_roi_top_width_ratio: float = 0.35,
         fallback_max_obstacle_ratio: float = 0.65,
+        rgb_floor_fusion_enabled: bool = True,
         rgb_floor_fallback_enabled: bool = True,
         floor_color_threshold: float = 48.0,
         floor_seed_bottom_ratio: float = 0.22,
+        near_floor_blind_distance_m: float = 2.0,
         min_navigable_width_m: float = 1.0,
     ) -> None:
         self.fx = float(fx)
@@ -77,9 +79,11 @@ class GroundSegmenter:
         self.fallback_roi_top_ratio = float(np.clip(fallback_roi_top_ratio, 0.05, 0.95))
         self.fallback_roi_top_width_ratio = float(np.clip(fallback_roi_top_width_ratio, 0.05, 1.0))
         self.fallback_max_obstacle_ratio = float(np.clip(fallback_max_obstacle_ratio, 0.0, 1.0))
+        self.rgb_floor_fusion_enabled = bool(rgb_floor_fusion_enabled)
         self.rgb_floor_fallback_enabled = bool(rgb_floor_fallback_enabled)
         self.floor_color_threshold = float(max(1.0, floor_color_threshold))
         self.floor_seed_bottom_ratio = float(np.clip(floor_seed_bottom_ratio, 0.05, 0.5))
+        self.near_floor_blind_distance_m = float(max(0.0, near_floor_blind_distance_m))
         self.min_navigable_width_m = float(max(0.0, min_navigable_width_m))
         self._ray_cache: dict[tuple[int, int, int, int], tuple[np.ndarray, np.ndarray]] = {}
 
@@ -163,6 +167,14 @@ class GroundSegmenter:
             free_full = self._resize_mask(free_full, frame_h, frame_w)
             obstacle_full = self._resize_mask(obstacle_full, frame_h, frame_w)
             unknown_full = self._resize_mask(unknown_full, frame_h, frame_w)
+
+        free_full, obstacle_full, unknown_full = self._fuse_rgb_floor(
+            free_full,
+            obstacle_full,
+            unknown_full,
+            color_frame,
+            detections,
+        )
 
         if self._should_use_fallback(free_full, obstacle_full, frame_shape):
             fallback_result = self._fallback_result(
@@ -423,25 +435,11 @@ class GroundSegmenter:
         processing_ms: float,
     ) -> FreeSpaceResult:
         h, w = color_frame.shape[:2]
-        roi = self._fallback_roi_mask(h, w)
-        det_mask = self._detection_mask((h, w), detections)
-
-        lab = cv2.cvtColor(color_frame, cv2.COLOR_BGR2LAB).astype(np.float32)
-        seed = roi.copy()
-        seed[: int(round(h * (1.0 - self.floor_seed_bottom_ratio))), :] = False
-        seed[det_mask] = False
-
-        if int(np.count_nonzero(seed)) < 32:
+        floor = self._rgb_floor_mask(color_frame, detections)
+        if floor is None:
             return self._bbox_fallback(h, w, detections, processing_ms)
 
-        seed_pixels = lab[seed]
-        center = np.median(seed_pixels, axis=0)
-        dist = np.linalg.norm(lab - center, axis=2)
-        floor = roi & (dist <= self.floor_color_threshold)
-        floor[det_mask] = False
-
-        floor = self._clean_floor_mask(floor, seed)
-
+        roi = self._fallback_roi_mask(h, w)
         free = floor.copy()
         obstacle = np.zeros((h, w), dtype=bool)
         unknown = np.ones((h, w), dtype=bool)
@@ -455,6 +453,57 @@ class GroundSegmenter:
         )
 
         return self._build_result(free, obstacle, unknown, w, processing_ms)
+
+    def _fuse_rgb_floor(
+        self,
+        free: np.ndarray,
+        obstacle: np.ndarray,
+        unknown: np.ndarray,
+        color_frame: np.ndarray | None,
+        detections: Any | None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if not self.rgb_floor_fusion_enabled or color_frame is None:
+            return free, obstacle, unknown
+
+        floor = self._rgb_floor_mask(color_frame, detections)
+        if floor is None:
+            return free, obstacle, unknown
+
+        if floor.shape != free.shape:
+            floor = self._resize_mask(floor, *free.shape)
+
+        add_free = floor & ~obstacle
+        if not np.any(add_free):
+            return free, obstacle, unknown
+
+        free[add_free] = True
+        unknown[add_free] = False
+        return free, obstacle, unknown
+
+    def _rgb_floor_mask(
+        self,
+        color_frame: np.ndarray,
+        detections: Any | None,
+    ) -> np.ndarray | None:
+        h, w = color_frame.shape[:2]
+        roi = self._fallback_roi_mask(h, w)
+        det_mask = self._detection_mask((h, w), detections)
+
+        lab = cv2.cvtColor(color_frame, cv2.COLOR_BGR2LAB).astype(np.float32)
+        seed = roi.copy()
+        seed[: int(round(h * (1.0 - self.floor_seed_bottom_ratio))), :] = False
+        seed[det_mask] = False
+
+        if int(np.count_nonzero(seed)) < 32:
+            return None
+
+        seed_pixels = lab[seed]
+        center = np.median(seed_pixels, axis=0)
+        dist = np.linalg.norm(lab - center, axis=2)
+        floor = roi & (dist <= self.floor_color_threshold)
+        floor[det_mask] = False
+
+        return self._clean_floor_mask(floor, seed)
 
     def _bbox_fallback(
         self,
@@ -540,7 +589,7 @@ class GroundSegmenter:
         z_m = self.camera_height_m / denom
         if not math.isfinite(z_m) or z_m <= 0.0:
             return None
-        return float(z_m)
+        return float(max(z_m, self.near_floor_blind_distance_m))
 
     def _pixel_width_to_metres(self, width_px: int, frame_w: int, z_m: float) -> float:
         scale_x = frame_w / max(self.cx * 2.0, 1e-6)
