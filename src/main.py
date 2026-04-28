@@ -120,17 +120,6 @@ def _build_pipeline(cfg) -> dict:
         follow_min_distance=heuristic_cfg.get("follow_min_distance", 0.5),
     )
 
-    safety_monitor = SafetyMonitor(
-        hard_stop_person=safe_cfg.get("hard_stop_distance_person", 2.0),
-        hard_stop_obstacle=safe_cfg.get("hard_stop_distance_obstacle", 0.3),
-        slow_down_distance=safe_cfg.get("slow_down_distance", 3.0),
-        slow_down_factor=safe_cfg.get("slow_down_factor", 0.5),
-        watchdog_timeout_ms=safe_cfg.get("watchdog_timeout_ms", 500.0),
-        battery_threshold=safe_cfg.get("battery_threshold_pct", 10.0),
-        watchdog_log_interval_s=safe_cfg.get("watchdog_log_interval_s", 5.0),
-        follow_min_distance=nav_cfg.get("heuristic.follow_min_distance", 0.5),
-    )
-
     publisher = ZMQPublisher(
         nav_cmd_port=zmq_cfg.get("nav_cmd_port", 5555),
         detections_port=zmq_cfg.get("detections_port", 5556),
@@ -182,7 +171,6 @@ def _build_pipeline(cfg) -> dict:
         intent_cnn=intent_cnn,
         context_builder=context_builder,
         heuristic_policy=heuristic_policy,
-        safety_monitor=safety_monitor,
         publisher=publisher,
         subscriber=subscriber,
         exp_buffer=exp_buffer,
@@ -260,7 +248,6 @@ class AIServer:
         cnn = c["intent_cnn"]
         ctx_bld = c["context_builder"]
         policy = c["heuristic_policy"]
-        safety = c["safety_monitor"]
         pub = c["publisher"]
         exp_col = c["exp_collector"]
 
@@ -287,7 +274,6 @@ class AIServer:
             robot_state = c["subscriber"].get_latest_state()
             cmd = policy.decide(observation, frame_det, intent_preds, robot_state)
 
-            cmd = safety.check(cmd, frame_det, intent_preds)
             cmd = self._apply_mode_override(cmd)
 
             ctx_bld.update_prev_action(cmd)
