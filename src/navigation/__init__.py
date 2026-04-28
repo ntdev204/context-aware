@@ -12,5 +12,4 @@ __all__ = [
     "NavigationCommand",
     "NavigationMode",
     "RobotState",
-    "SafetyMonitor",
 ]
