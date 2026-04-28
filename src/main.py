@@ -113,6 +113,8 @@ class _AsyncPerceptionWorker:
                     self._cond.wait()
                 if not self._running:
                     return
+                if self._pending is None:
+                    continue
                 frame, depth_frame, frame_id = self._pending
                 self._pending = None
 
@@ -258,16 +260,15 @@ def _build_pipeline(cfg) -> dict:
         else None
     )
 
-    exp_collector = (
-        ExperienceCollector(
+    exp_collector = None
+    if _hdf5_enabled:
+        assert exp_buffer is not None
+        exp_collector = ExperienceCollector(
             buffer=exp_buffer,
             jpeg_quality=exp_cfg.get("jpeg_quality", 85),
-            enabled=_hdf5_enabled,
+            enabled=True,
             session_id=str(uuid.uuid4())[:8],
         )
-        if _hdf5_enabled
-        else None
-    )
 
     roi_saver = (
         ROISaver(
@@ -457,7 +458,7 @@ class AIServer:
             ground_segmenter.apply_to_frame(frame_det, freespace)
         frame_det = tracker.update(frame_det, frame.shape)
         rois = roi_ex.extract(frame, frame_det)
-        intent_preds = cnn.predict_batch(rois)
+        intent_preds = cnn.predict_batch(rois) or []
 
         self._annotate_intents(frame_det, intent_preds)
         observation = ctx_bld.build(frame_det, intent_preds)
@@ -491,7 +492,9 @@ class AIServer:
             processed_at=time.monotonic(),
         )
 
-    def _annotate_intents(self, frame_det, intent_preds) -> None:
+    def _annotate_intents(self, frame_det: FrameDetections, intent_preds: list[Any] | None) -> None:
+        if not intent_preds:
+            return
         intent_map = {p.track_id: p for p in intent_preds}
         for person in frame_det.persons:
             pred = intent_map.get(person.track_id)
@@ -523,7 +526,9 @@ class AIServer:
             logger.warning("Unknown mode override '%s' -- ignoring", override)
         return cmd
 
-    def _detections_payload(self, frame_det, cmd) -> dict[str, Any]:
+    def _detections_payload(
+        self, frame_det: FrameDetections, cmd: NavigationCommand
+    ) -> dict[str, Any]:
         def _det_payload(det) -> dict[str, Any]:
             return {
                 "track_id": det.track_id,
@@ -555,7 +560,13 @@ class AIServer:
         }
 
     def _update_metrics(
-        self, fps_count: int, elapsed: float, frame_det, frame_id: int, cmd, c: dict
+        self,
+        fps_count: int,
+        elapsed: float,
+        frame_det: FrameDetections,
+        frame_id: int,
+        cmd: NavigationCommand,
+        c: dict,
     ) -> None:
         fps = fps_count / elapsed
         all_dets = frame_det.all_detections
