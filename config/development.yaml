@@ -91,7 +91,8 @@ navigation:
     cruise_velocity: 1.0
     cautious_velocity: 0.6
     avoid_velocity: 0.3
-    follow_velocity: 0.5
+    follow_max_vel: 0.5
+    follow_min_vel: 0.3
 
   safety:
     hard_stop_distance_person: 2.0

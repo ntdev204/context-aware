@@ -97,7 +97,7 @@ navigation:
     cruise_velocity: 1.0
     cautious_velocity: 0.6
     avoid_velocity: 0.3
-    follow_max_vel: 0.3          # tốc độ tối đa trong follow mode
+    follow_max_vel: 0.5          # tốc độ tối đa trong follow mode
     follow_min_vel: 0.3          # tốc độ tối thiểu khi đang di chuyển
     # --- Bám người tự động ---
     auto_follow: true            # true = bật chế độ bám người; false = hành vi cũ
