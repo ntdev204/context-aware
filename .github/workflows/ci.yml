@@ -68,4 +68,7 @@ jobs:
 
       - name: Build
         run: |
-          docker compose -f docker/docker-compose.yml --profile server build server-train
+          docker buildx build \
+            --file docker/Dockerfile.server \
+            --output type=cacheonly \
+            .
