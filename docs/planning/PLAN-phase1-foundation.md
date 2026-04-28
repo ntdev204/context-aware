@@ -273,7 +273,7 @@ src/experience/buffer.py
 > 🔴 **CAUTION**
 > Safety CANNOT be learned — must be engineered. Bottleneck C3.
 
-- [ ] `src/navigation/safety_monitor.py`
+- [ ] `src/navigation/heuristic_policy.py`
   - **Layer 1: Output Clipping** (trong navigation policy)
     - `velocity_scale` clamp [0.0, 1.0]
     - `heading_offset` clamp [-π/4, π/4]
@@ -295,7 +295,7 @@ src/experience/buffer.py
 **Files**:
 
 ```
-src/navigation/safety_monitor.py
+src/navigation/heuristic_policy.py
 ```
 
 ---

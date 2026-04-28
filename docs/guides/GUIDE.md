@@ -41,7 +41,7 @@ The Jetson communicates with the Raspberry Pi over LAN. Ethernet is preferred; W
 | Device | Role | Default IP |
 |--------|------|-----------|
 | Jetson | AI Server | `100.104.204.128` |
-| RasPi 4 | Navigation controller | `192.168.1.101` |
+| RasPi 4 | Navigation controller | `25.12.4.101` |
 
 Update `communication.zmq.rasp_pi_ip` in `config/production.yaml` to match your RasPi IP.
 
@@ -101,7 +101,7 @@ INFO     IntentCNN loaded [device=cuda]
 INFO     Astra S OpenNI2 streams opened (640x480)
 INFO     Camera started: 640x480 @ 30 FPS [astra, depth=True]
 INFO     ZMQ Publisher started
-INFO     ZMQ Subscriber connected to 192.168.1.101:5560
+INFO     ZMQ Subscriber connected to 25.12.4.101:5560
 INFO     Edge API started: http://0.0.0.0:8080  (docs: /docs)
 INFO     All components started -- entering inference loop
 ```
@@ -249,7 +249,7 @@ curl -X DELETE http://100.104.204.128:8080/control/mode
 ### Update FPS target at runtime
 
 ```bash
-curl -X PATCH http://192.168.1.100:8080/config \
+curl -X PATCH http://25.12.4.100:8080/config \
   -H "Content-Type: application/json" \
   -d '{"fps_target": 20}'
 ```
@@ -257,7 +257,7 @@ curl -X PATCH http://192.168.1.100:8080/config \
 ### Adjust YOLO confidence threshold at runtime
 
 ```bash
-curl -X PATCH http://192.168.1.100:8080/config \
+curl -X PATCH http://25.12.4.100:8080/config \
   -H "Content-Type: application/json" \
   -d '{"yolo_confidence_threshold": 0.6}'
 ```

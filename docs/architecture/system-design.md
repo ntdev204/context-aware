@@ -1237,7 +1237,7 @@ context-aware/                    # Jetson AI Server repo
 │   │   ├── context_builder.py    # Build observation from detections
 │   │   ├── rl_policy.py          # RL policy TensorRT inference
 │   │   ├── nav_command.py        # NavigationCommand generation
-│   │   └── safety_monitor.py     # Hard safety constraints
+│   │   └── heuristic_policy.py   # Rule-based policy and safety decisions
 │   │
 │   ├── communication/            # ZMQ + gRPC
 │   │   ├── __init__.py
@@ -1421,7 +1421,7 @@ context-aware/                    # Jetson AI Server repo
 ```yaml
 # Default network config
 jetson:
-  ip: 192.168.1.10
+  ip: 25.12.4.100
   zmq_pub_nav: 5555
   zmq_pub_det: 5556
   zmq_sub_state: 5560
@@ -1429,14 +1429,14 @@ jetson:
   grpc_port: 50051
 
 raspi:
-  ip: 192.168.1.20
+  ip: 25.12.4.101
   zmq_pub_state: 5560
   zmq_sub_nav: 5555
   zmq_sub_det: 5556
   zmq_req_config: 5570
 
 laptop:
-  ip: 192.168.1.100
+  ip: localhost
   grpc_port: 50052 # VLM + Training services
   ollama_port: 11434 # Ollama API
 ```
