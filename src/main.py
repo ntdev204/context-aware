@@ -182,9 +182,11 @@ def _build_pipeline(cfg) -> dict:
             fallback_roi_top_ratio=freespace_cfg.get("fallback_roi_top_ratio", 0.45),
             fallback_roi_top_width_ratio=freespace_cfg.get("fallback_roi_top_width_ratio", 0.35),
             fallback_max_obstacle_ratio=freespace_cfg.get("fallback_max_obstacle_ratio", 0.65),
+            rgb_floor_fusion_enabled=freespace_cfg.get("rgb_floor_fusion_enabled", True),
             rgb_floor_fallback_enabled=freespace_cfg.get("rgb_floor_fallback_enabled", True),
             floor_color_threshold=freespace_cfg.get("floor_color_threshold", 48.0),
             floor_seed_bottom_ratio=freespace_cfg.get("floor_seed_bottom_ratio", 0.22),
+            near_floor_blind_distance_m=freespace_cfg.get("near_floor_blind_distance_m", 0.0),
             min_navigable_width_m=freespace_cfg.get("min_navigable_width_m", 1.0),
         )
         if freespace_enabled

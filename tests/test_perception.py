@@ -222,6 +222,40 @@ class TestGroundSegmenter:
         assert result.obstacle_mask[85:115, 130:150].mean() > 0.9
         assert result.free_sectors[1] > result.free_sectors[-1]
 
+    def test_rgb_floor_fusion_adds_floor_beyond_depth_range(self):
+        seg = GroundSegmenter(
+            fx=120.0,
+            fy=120.0,
+            cx=80.0,
+            cy=60.0,
+            camera_height_m=0.5,
+            depth_min_mm=100,
+            depth_max_mm=2000,
+            downscale=1,
+            ground_tolerance_m=0.08,
+            obstacle_height_m=0.10,
+            safety_margin_px=0,
+            sector_count=8,
+            bbox_fallback_enabled=False,
+            rgb_floor_fusion_enabled=True,
+            rgb_floor_fallback_enabled=False,
+            near_floor_blind_distance_m=2.0,
+        )
+        depth = np.zeros((120, 160), dtype=np.uint16)
+        depth[60:, :] = 3000  # visible floor is farther than the depth free-space cap
+        depth[80:120, 130:155] = 900
+        frame = make_floor_rgb()
+        det = make_detection(130, 70, 155, 120, cls="obstacle")
+        fd = make_frame_det(obstacles=[det])
+
+        result = seg.segment(depth, detections=fd, frame_shape=frame.shape, color_frame=frame)
+
+        assert result.free_space_ratio > 0.35
+        assert result.navigable_width_m >= 1.0
+        assert result.free_mask[95, 30]
+        assert result.obstacle_mask[85:115, 135:150].mean() > 0.9
+        assert result.free_sectors[1] > result.free_sectors[-1]
+
     def test_width_gate_blocks_too_narrow_floor(self):
         seg = self._segmenter()
         frame = make_floor_rgb()
@@ -237,6 +271,18 @@ class TestGroundSegmenter:
         assert result.free_space_ratio > 0.0
         assert result.navigable_width_m < 1.0
         assert np.max(result.free_sectors) == 0.0
+
+    def test_near_floor_blind_distance_clamps_width_projection(self):
+        seg = GroundSegmenter(
+            fx=120.0,
+            fy=120.0,
+            cx=80.0,
+            cy=60.0,
+            camera_height_m=0.5,
+            near_floor_blind_distance_m=2.0,
+        )
+
+        assert seg._ground_z_at_row(119, 120) >= 2.0
 
     def test_yolo_bbox_fusion_blocks_free_region(self):
         seg = self._segmenter()
