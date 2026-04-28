@@ -109,7 +109,7 @@ class HeuristicPolicy:
                 elif robot_state.dist_right < 0.4:
                     strafe = 0.4    # trượt trái khi bên phải có tường
             
-            cmd = self._decide_follow(persons, free_ratio, intent_map)
+            cmd = self._decide_follow(persons, free_ratio, intent_map, robot_state)
             # Nếu không đang né tường, dùng strafe để bám người ngang
             if strafe == 0.0:
                 strafe = self._lateral_strafe_to_target(self._follow_target_id, persons, free_ratio)
@@ -165,6 +165,7 @@ class HeuristicPolicy:
         persons: list[DetectionResult],
         free_ratio: float,
         intent_map: dict,
+        robot_state=None,
     ) -> NavigationCommand:
         """Context-aware person following: velocity scales with distance, free space, and intent.
 
@@ -226,6 +227,15 @@ class HeuristicPolicy:
 
         # Mecanum follow: KHÔNG xoay đầu, giữ heading_offset = 0
         # Lateral centering được xử lý bởi velocity_y ở tầng gọi hàm này
+        # Cross-check với Lidar: nếu Lidar nhìn thấy vật ở phía trước gần hơn camera đáng kể
+        # → camera đang overestimate, dùng Lidar distance để quyết định velocity
+        if robot_state and robot_state.dist_front < dist - 0.30:
+            logger.debug(
+                "Lidar cross-check: camera=%.2fm lidar=%.2fm → dùng Lidar",
+                dist, robot_state.dist_front,
+            )
+            dist = robot_state.dist_front
+
         error = dist - self.follow_target_distance
         if abs(error) < self.follow_deadband:
             vel = 0.0
