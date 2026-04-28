@@ -10,8 +10,9 @@ def draw_detections(
     obstacles: list,
     mode_name: str,
     fps: float,
+    copy: bool = True,
 ) -> np.ndarray:
-    vis = frame.copy()
+    vis = frame.copy() if copy else frame
 
     for p in persons:
         x1, y1, x2, y2 = p.bbox

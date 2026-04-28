@@ -35,6 +35,8 @@ from .state import VALID_MODE_OVERRIDES, ServerState
 
 log = logging.getLogger(__name__)
 
+MJPEG_FRAME_INTERVAL_S = 1.0 / 30.0
+
 UPDATABLE_CONFIG_KEYS = frozenset(
     {
         "fps_target",
@@ -100,7 +102,7 @@ def create_app(state: ServerState) -> FastAPI:
                     yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
                     last_frame = frame
 
-                time.sleep(0.066)
+                time.sleep(MJPEG_FRAME_INTERVAL_S)
 
         return StreamingResponse(
             generate(),

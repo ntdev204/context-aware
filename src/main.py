@@ -357,7 +357,7 @@ class AIServer:
 
     def _inference_loop(self) -> None:
         c = self._components
-        fps_target = self.cfg.get("system.fps_target", 30)
+        fps_target = float(self.cfg.get("system.fps_target", 30))
         frame_interval = 1.0 / fps_target
         jpeg_quality = c["stream_jpeg_quality"]
         dev_mode = self.cfg.get("system.mode", "production") == "development"
@@ -394,17 +394,20 @@ class AIServer:
                 frame_det = latest.frame_det
                 cmd = latest.cmd
 
-            if dev_mode:
-                self._show_dev_window(frame, frame_det, cmd)
-
-            freespace_vis = draw_freespace_overlay(frame, frame_det)
+            metrics = self._state.get_metrics()
+            annotated = frame.copy()
+            annotated = draw_freespace_overlay(annotated, frame_det, copy=False)
             annotated = draw_detections(
-                freespace_vis,
+                annotated,
                 frame_det.persons,
                 frame_det.obstacles,
                 cmd.mode.name,
-                self._state.get_metrics().fps,
+                metrics.fps,
+                copy=False,
             )
+            if dev_mode:
+                self._show_dev_window(annotated)
+
             jpeg = encode_jpeg(annotated, quality=jpeg_quality)
             if jpeg:
                 self._state.push_frame(jpeg)
@@ -412,9 +415,9 @@ class AIServer:
             frame_id += 1
             fps_count += 1
 
-            elapsed_5s = time.monotonic() - t_fps
-            if elapsed_5s >= 5.0:
-                self._update_metrics(fps_count, elapsed_5s, frame_det, frame_id, cmd, c)
+            elapsed_fps = time.monotonic() - t_fps
+            if elapsed_fps >= 1.0:
+                self._update_metrics(fps_count, elapsed_fps, frame_det, frame_id, cmd, c)
                 fps_count = 0
                 t_fps = time.monotonic()
 
@@ -582,16 +585,9 @@ class AIServer:
             frame_det.freespace_processing_ms,
         )
 
-    def _show_dev_window(self, frame, frame_det, cmd) -> None:
+    def _show_dev_window(self, vis) -> None:
         import cv2
 
-        vis = draw_detections(
-            draw_freespace_overlay(frame, frame_det),
-            frame_det.persons,
-            frame_det.obstacles,
-            cmd.mode.name,
-            self._state.get_metrics().fps,
-        )
         cv2.imshow("Context-Aware AI [DEV]", vis)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             self._running = False
