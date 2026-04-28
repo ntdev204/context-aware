@@ -74,7 +74,7 @@ navigation:
     follow_min_vel: 0.3          # tốc độ tối thiểu khi đang di chuyển
     # --- Bám người tự động ---
     auto_follow: true            # true = bật chế độ bám người; false = hành vi cũ
-    follow_target_distance: 1.2  # giữ khoảng cách 1.2m với target
+    follow_target_distance: 2.0  # giữ khoảng cách 2.0m với target (tránh vùng depth camera chỉ thấy chân)
     follow_deadband: 0.08        # ±0.08m: không điều chỉnh nếu sai số nhỏ hơn ngưỡng này
     follow_kp: 1.0               # hệ số P-controller (tăng = phản ứng nhanh hơn)
     target_lost_timeout_s: 300.0 # giải phóng target nếu mất track > 5 phút (300 giây)
