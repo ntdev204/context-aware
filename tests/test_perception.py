@@ -294,10 +294,19 @@ class TestGroundSegmenter:
         assert result.obstacle_mask[90:110, 70:90].mean() > 0.9
         assert result.free_mask[90:110, 70:90].mean() < 0.1
 
-    def test_corridor_heading_prefers_open_right_side(self):
+    def test_corridor_heading_stays_center_when_center_is_open(self):
+        seg = self._segmenter()
+        sectors = np.array([0.95, 0.95, 0.95, 0.85, 0.75, 0.10, 0.10, 0.10], dtype=np.float32)
+
+        heading, width = seg._navigable_corridor(sectors, 160)
+
+        assert heading == 0.0
+        assert width > 0.0
+
+    def test_corridor_heading_prefers_open_right_side_when_center_blocked(self):
         seg = self._segmenter()
         depth = make_floor_depth()
-        det = make_detection(0, 0, 40, 120, cls="obstacle")
+        det = make_detection(0, 0, 95, 120, cls="obstacle")
         fd = make_frame_det(obstacles=[det])
         result = seg.segment(depth, detections=fd)
         assert result.navigable_heading > 0.0
