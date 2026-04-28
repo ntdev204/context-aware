@@ -98,23 +98,10 @@ class HeuristicPolicy:
         # tại follow_min_distance (0.5m). KHÔNG dùng hard_stop_dist (2.0m) ở đây vì sẽ
         # chặn lệnh lùi ra xa khi người đứng trong khoảng (0.5m, 2.0m).
         if self.auto_follow:
-            # Lidar Safety Shield trên Raspberry Pi sẽ tự động chặn vật cản ở cấp độ cm.
-            # Jetson không được gửi STOP, để cho xe trượt ngang né qua vật cản.
-            # Mecanum: dùng strafe (velocity_y) để né tường, KHÔNG xoay đầu
-            strafe = 0.0
-            if robot_state:
-                # Ưu tiên né tường trước (override strafe bám người)
-                if robot_state.dist_left < 0.4:
-                    strafe = -0.4   # trượt phải khi bên trái có tường
-                elif robot_state.dist_right < 0.4:
-                    strafe = 0.4    # trượt trái khi bên phải có tường
-            
-            cmd = self._decide_follow(persons, free_ratio, intent_map, robot_state)
-            # Nếu không đang né tường, dùng strafe để bám người ngang
-            if strafe == 0.0:
-                strafe = self._lateral_strafe_to_target(self._follow_target_id, persons, free_ratio)
-            cmd.velocity_y = strafe
+            cmd = self._decide_follow(persons, free_ratio, intent_map)
+            cmd.velocity_y = self._lateral_strafe_to_target(self._follow_target_id, persons, free_ratio)
             return cmd
+
 
         if persons and nearest_person_dist < self.hard_stop_dist:
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99)
@@ -165,7 +152,6 @@ class HeuristicPolicy:
         persons: list[DetectionResult],
         free_ratio: float,
         intent_map: dict,
-        robot_state=None,
     ) -> NavigationCommand:
         """Context-aware person following: velocity scales with distance, free space, and intent.
 
@@ -227,14 +213,6 @@ class HeuristicPolicy:
 
         # Mecanum follow: KHÔNG xoay đầu, giữ heading_offset = 0
         # Lateral centering được xử lý bởi velocity_y ở tầng gọi hàm này
-        # Cross-check với Lidar: nếu Lidar nhìn thấy vật ở phía trước gần hơn camera đáng kể
-        # → camera đang overestimate, dùng Lidar distance để quyết định velocity
-        if robot_state and robot_state.dist_front < dist - 0.30:
-            logger.debug(
-                "Lidar cross-check: camera=%.2fm lidar=%.2fm → dùng Lidar",
-                dist, robot_state.dist_front,
-            )
-            dist = robot_state.dist_front
 
         error = dist - self.follow_target_distance
         if abs(error) < self.follow_deadband:
