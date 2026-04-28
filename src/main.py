@@ -393,7 +393,6 @@ class AIServer:
 
     def _on_robot_state(self, state: RobotState) -> None:
         c = self._components
-        c["safety_monitor"].update_robot_state(state)
         c["context_builder"].update_robot_state(state)
         
         # Đẩy dữ liệu lên API để Website hiển thị Online và cập nhật Pin
