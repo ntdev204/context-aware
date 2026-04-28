@@ -30,11 +30,16 @@ def make_det(x1=100, y1=100, x2=200, y2=400, cls="person", tid=1):
     )
 
 
-def make_fd(persons=None, obstacles=None, free_space=0.9):
+def make_fd(
+    persons=None, obstacles=None, free_space=0.9, free_sectors=None, heading=0.0, width=0.0
+):
     fd = FrameDetections(free_space_ratio=free_space)
     fd.persons = persons or []
     fd.obstacles = obstacles or []
     fd.all_detections = fd.persons + fd.obstacles
+    fd.free_sectors = None if free_sectors is None else np.asarray(free_sectors, dtype=np.float32)
+    fd.navigable_heading = heading
+    fd.navigable_width = width
     return fd
 
 
@@ -83,6 +88,15 @@ class TestContextBuilder:
         obs = cb.build(fd, [])
         assert abs(obs[5] - 0.75) < 1e-4
 
+    def test_camera_freespace_fields_in_obs(self):
+        cb = ContextBuilder(temporal_stack_size=1)
+        sectors = np.linspace(0.0, 1.0, 8, dtype=np.float32)
+        fd = make_fd(free_sectors=sectors, heading=math.pi / 8, width=math.pi / 4)
+        obs = cb.build(fd, [])
+        assert np.allclose(obs[104:112], sectors)
+        assert abs(obs[112] - 0.5) < 1e-4
+        assert abs(obs[113] - 0.5) < 1e-4
+
     def test_no_persons_distance_is_normalised(self):
         cb = ContextBuilder(temporal_stack_size=1)
         fd = make_fd(persons=[], free_space=1.0)
@@ -127,7 +141,7 @@ class TestHeuristicPolicy:
         return HeuristicPolicy(hard_stop_distance=0.5, slow_down_distance=1.0)
 
     def _obs(self, person_dist=5.0, obstacle_dist=5.0, free=0.9):
-        obs = np.zeros(102, dtype=np.float32)
+        obs = np.zeros(OBS_DIM, dtype=np.float32)
         obs[1] = person_dist / 5.0
         obs[3] = obstacle_dist / 5.0
         obs[5] = free
@@ -164,14 +178,14 @@ class TestHeuristicPolicy:
         assert 0.0 < cmd.velocity_scale <= policy.cautious_vel
 
     def test_velocity_clipped_to_one(self):
-        policy = HeuristicPolicy(cruise_velocity=2.0)  # intentionally > 1
+        policy = HeuristicPolicy(cruise_velocity=2.0)
         obs = self._obs()
         cmd = policy.decide(obs, make_fd(free_space=1.0), [])
         assert cmd.velocity_scale <= 1.0
 
     def test_heading_clipped(self):
         policy = self._policy()
-        person = make_det(0, 100, 50, 400)  # far left → should steer right
+        person = make_det(0, 100, 50, 400)
         obs = self._obs(person_dist=1.5, free=0.4)
         pred = make_pred(track_id=1, intent=CROSSING, conf=0.9)
         cmd = policy.decide(obs, make_fd(persons=[person]), [pred])
@@ -183,4 +197,23 @@ class TestHeuristicPolicy:
         cmd = policy.decide(obs, make_fd(persons=[make_det()]), [])
         assert cmd.mode == NavigationMode.CAUTIOUS
 
+    def test_cruise_uses_navigable_heading(self):
+        policy = self._policy()
+        obs = self._obs(free=0.95)
+        fd = make_fd(
+            free_space=0.95,
+            free_sectors=[0.9] * 8,
+            heading=math.radians(12),
+            width=math.radians(40),
+        )
+        cmd = policy.decide(obs, fd, [])
+        assert cmd.mode == NavigationMode.CRUISE
+        assert abs(cmd.heading_offset - math.radians(12)) < 1e-4
 
+    def test_front_blocked_stops(self):
+        policy = self._policy()
+        obs = self._obs(free=0.95)
+        fd = make_fd(free_space=0.95, free_sectors=[0.9, 0.9, 0.9, 0.0, 0.0, 0.9, 0.9, 0.9])
+        cmd = policy.decide(obs, fd, [])
+        assert cmd.mode == NavigationMode.STOP
+        assert cmd.safety_override is True

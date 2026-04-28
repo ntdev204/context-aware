@@ -35,12 +35,13 @@ from .navigation import (
 )
 from .perception import (
     Camera,
+    GroundSegmenter,
     IntentCNN,
     ROIExtractor,
     Tracker,
     YOLODetector,
 )
-from .streaming import draw_detections, encode_jpeg
+from .streaming import draw_detections, draw_freespace_overlay, encode_jpeg
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,30 @@ def _build_pipeline(cfg) -> dict:
         confidence_threshold=per_cfg.get("yolo.confidence_threshold", 0.5),
         iou_threshold=per_cfg.get("yolo.iou_threshold", 0.45),
         input_size=per_cfg.get("yolo.input_size", 640),
+    )
+
+    freespace_cfg = per_cfg.get("freespace", {})
+    freespace_enabled = bool(freespace_cfg.get("enabled", cam_cfg.get("backend", "usb") == "astra"))
+    ground_segmenter = (
+        GroundSegmenter(
+            fx=freespace_cfg.get("fx", 570.0),
+            fy=freespace_cfg.get("fy", 570.0),
+            cx=freespace_cfg.get("cx", 320.0),
+            cy=freespace_cfg.get("cy", 240.0),
+            camera_height_m=freespace_cfg.get("camera_height_m", 0.50),
+            camera_pitch_deg=freespace_cfg.get("camera_pitch_deg", 0.0),
+            depth_min_mm=freespace_cfg.get("depth_min_mm", 400),
+            depth_max_mm=freespace_cfg.get("depth_max_mm", 2000),
+            downscale=freespace_cfg.get("downscale", 4),
+            ground_tolerance_m=freespace_cfg.get("ground_tolerance_m", 0.08),
+            obstacle_height_m=freespace_cfg.get("obstacle_height_m", 0.10),
+            safety_margin_px=freespace_cfg.get("safety_margin_px", 18),
+            sector_count=freespace_cfg.get("sector_count", 8),
+            sector_free_threshold=freespace_cfg.get("sector_free_threshold", 0.55),
+            fov_deg=freespace_cfg.get("fov_deg", None),
+        )
+        if freespace_enabled
+        else None
     )
 
     tracker = Tracker(
@@ -166,6 +191,7 @@ def _build_pipeline(cfg) -> dict:
         camera=camera,
         yolo=yolo,
         tracker=tracker,
+        ground_segmenter=ground_segmenter,
         roi_extractor=roi_extractor,
         intent_cnn=intent_cnn,
         context_builder=context_builder,
@@ -243,6 +269,7 @@ class AIServer:
 
         yolo = c["yolo"]
         tracker = c["tracker"]
+        ground_segmenter = c["ground_segmenter"]
         roi_ex = c["roi_extractor"]
         cnn = c["intent_cnn"]
         ctx_bld = c["context_builder"]
@@ -263,6 +290,13 @@ class AIServer:
                 continue
 
             frame_det = yolo.detect(frame, frame_id=frame_id, depth_frame=depth_frame)
+            if ground_segmenter is not None:
+                freespace = ground_segmenter.segment(
+                    depth_frame,
+                    detections=frame_det,
+                    frame_shape=frame.shape,
+                )
+                ground_segmenter.apply_to_frame(frame_det, freespace)
             frame_det = tracker.update(frame_det, frame.shape)
             rois = roi_ex.extract(frame, frame_det)
             intent_preds = cnn.predict_batch(rois)
@@ -283,8 +317,9 @@ class AIServer:
             if dev_mode:
                 self._show_dev_window(frame, frame_det, cmd)
 
+            freespace_vis = draw_freespace_overlay(frame, frame_det)
             annotated = draw_detections(
-                frame,
+                freespace_vis,
                 frame_det.persons,
                 frame_det.obstacles,
                 cmd.mode.name,
@@ -337,10 +372,20 @@ class AIServer:
         override = self._state.get_mode_override()
         if override is None:
             return cmd
+        if override == "YIELD":
+            cmd.mode = NavigationMode.STOP
+            cmd.velocity_scale = 0.0
+            cmd.velocity_y = 0.0
+            cmd.heading_offset = 0.0
+            cmd.safety_override = False
+            return cmd
         try:
             cmd.mode = NavigationMode[override]
             if override == "STOP":
-                cmd.velocity = 0.0
+                cmd.velocity_scale = 0.0
+                cmd.velocity_y = 0.0
+                cmd.heading_offset = 0.0
+                cmd.safety_override = True
         except KeyError:
             logger.warning("Unknown mode override '%s' -- ignoring", override)
         return cmd
@@ -360,24 +405,27 @@ class AIServer:
             obstacles=len(frame_det.obstacles),
             buffer_size=buf_size,
             depth_coverage_pct=depth_coverage,
+            inference_ms=frame_det.inference_ms + frame_det.freespace_processing_ms,
             mode=cmd.mode.name,
             frame_id=frame_id,
         )
 
         logger.info(
-            "FPS=%.1f  mode=%s  persons=%d  buf=%d  depth_cov=%.0f%%",
+            "FPS=%.1f  mode=%s  persons=%d  buf=%d  depth_cov=%.0f%%  free=%.0f%%  fs=%.1fms",
             fps,
             cmd.mode.name,
             len(frame_det.persons),
             buf_size,
             depth_coverage,
+            frame_det.free_space_ratio * 100.0,
+            frame_det.freespace_processing_ms,
         )
 
     def _show_dev_window(self, frame, frame_det, cmd) -> None:
         import cv2
 
         vis = draw_detections(
-            frame,
+            draw_freespace_overlay(frame, frame_det),
             frame_det.persons,
             frame_det.obstacles,
             cmd.mode.name,
@@ -394,12 +442,10 @@ class AIServer:
     def _on_robot_state(self, state: RobotState) -> None:
         c = self._components
         c["context_builder"].update_robot_state(state)
-        
+
         # Đẩy dữ liệu lên API để Website hiển thị Online và cập nhật Pin
         self._state.update_metrics(
-            battery_percent=state.battery_percent,
-            vx=state.vx,
-            vtheta=state.vtheta
+            battery_percent=state.battery_percent, vx=state.vx, vtheta=state.vtheta
         )
 
     def _on_watchdog_timeout(self) -> None:

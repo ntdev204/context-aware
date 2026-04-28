@@ -56,6 +56,10 @@ message DetectionList {
   double timestamp              = 2;
   int32  frame_id               = 3;
   float  free_space_ratio       = 4;
+  repeated float free_sectors   = 5;
+  float navigable_heading       = 6;
+  float navigable_width         = 7;
+  float freespace_processing_ms = 8;
 }
 
 // ═══════════════════════════════════════════════════════

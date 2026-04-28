@@ -24,7 +24,7 @@ class InferenceMetrics:
     updated_at: float = field(default_factory=time.monotonic)
 
 
-VALID_MODE_OVERRIDES = frozenset({"STOP", "CRUISE", "CAUTIOUS", "AVOID", "FOLLOW"})
+VALID_MODE_OVERRIDES = frozenset({"STOP", "CRUISE", "CAUTIOUS", "AVOID", "FOLLOW", "YIELD"})
 
 
 class ServerState:

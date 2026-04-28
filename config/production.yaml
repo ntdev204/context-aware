@@ -41,6 +41,23 @@ perception:
         "free_space",
       ]
 
+  freespace:
+    enabled: true
+    fx: 570.0
+    fy: 570.0
+    cx: 320.0
+    cy: 240.0
+    camera_height_m: 0.50
+    camera_pitch_deg: 0.0
+    depth_min_mm: 400
+    depth_max_mm: 2000
+    downscale: 4
+    ground_tolerance_m: 0.08
+    obstacle_height_m: 0.10
+    safety_margin_px: 18
+    sector_count: 8
+    sector_free_threshold: 0.55
+
   tracker:
     max_age: 60      # giữ track lâu hơn khi người bị che khuất tạm thời
     min_hits: 1      # lock ngay frame đầu tiên, không cần chờ 3 frame
@@ -58,8 +75,8 @@ perception:
 
 context:
   temporal_stack_size: 1
-  state_version: "v1-snapshot"
-  observation_dim: 104
+  state_version: "v2-camera-freespace"
+  observation_dim: 114
   occupancy_grid_size: 8
 
 navigation:

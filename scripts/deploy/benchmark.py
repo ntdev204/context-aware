@@ -90,7 +90,7 @@ def run_benchmark(args) -> None:
         rois = roi_ex.extract(frame, frame_det)
         preds = cnn.predict_batch(rois)
         obs = ctx_bld.build(frame_det, preds)
-        cmd = policy.decide(obs, frame_det, preds)
+        policy.decide(obs, frame_det, preds)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         latencies.append(elapsed_ms)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from src.perception.ground_segmenter import GroundSegmenter
 from src.perception.intent_cnn import (
     ERRATIC,
     STATIONARY,
@@ -132,6 +133,76 @@ class TestFallbackTracker:
     def test_empty_detections(self):
         tracker = _FallbackTracker(min_hits=1)
         assert tracker.update([]) == []
+
+
+# ── Ground Segmenter ─────────────────────────────────────────────────────────
+
+
+def make_floor_depth(h=120, w=160, fx=120.0, fy=120.0, cx=80.0, cy=60.0, height=0.5):
+    depth = np.zeros((h, w), dtype=np.uint16)
+    for y in range(int(cy) + 1, h):
+        z_m = height * fy / max(y - cy, 1e-6)
+        z_mm = int(round(z_m * 1000.0))
+        if 100 <= z_mm <= 5000:
+            depth[y, :] = z_mm
+    return depth
+
+
+class TestGroundSegmenter:
+    def _segmenter(self):
+        return GroundSegmenter(
+            fx=120.0,
+            fy=120.0,
+            cx=80.0,
+            cy=60.0,
+            camera_height_m=0.5,
+            depth_min_mm=100,
+            depth_max_mm=5000,
+            downscale=1,
+            ground_tolerance_m=0.08,
+            obstacle_height_m=0.10,
+            safety_margin_px=0,
+            sector_count=8,
+        )
+
+    def test_flat_floor_is_free(self):
+        seg = self._segmenter()
+        result = seg.segment(make_floor_depth())
+        assert result.free_mask.shape == (120, 160)
+        assert result.free_space_ratio > 0.95
+        assert result.free_mask[90:, :].mean() > 0.9
+
+    def test_obstacle_patch_blocks_floor(self):
+        seg = self._segmenter()
+        depth = make_floor_depth()
+        depth[90:110, 70:90] = 900
+        result = seg.segment(depth)
+        assert result.obstacle_mask[90:110, 70:90].mean() > 0.9
+        assert result.free_mask[90:110, 70:90].mean() < 0.1
+
+    def test_invalid_depth_is_unknown(self):
+        seg = self._segmenter()
+        result = seg.segment(np.zeros((120, 160), dtype=np.uint16))
+        assert result.free_space_ratio == 0.0
+        assert result.unknown_mask.mean() == 1.0
+
+    def test_yolo_bbox_fusion_blocks_free_region(self):
+        seg = self._segmenter()
+        depth = make_floor_depth()
+        det = make_detection(70, 90, 90, 110, cls="person")
+        fd = make_frame_det(persons=[det])
+        result = seg.segment(depth, detections=fd)
+        assert result.obstacle_mask[90:110, 70:90].mean() > 0.9
+        assert result.free_mask[90:110, 70:90].mean() < 0.1
+
+    def test_corridor_heading_prefers_open_right_side(self):
+        seg = self._segmenter()
+        depth = make_floor_depth()
+        det = make_detection(0, 0, 120, 120, cls="obstacle")
+        fd = make_frame_det(obstacles=[det])
+        result = seg.segment(depth, detections=fd)
+        assert result.navigable_heading > 0.0
+        assert result.free_sectors[-1] > result.free_sectors[0]
 
 
 # ── CNN Intent Model ─────────────────────────────────────────────────────────

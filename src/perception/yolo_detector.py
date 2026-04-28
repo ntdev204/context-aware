@@ -50,6 +50,13 @@ class FrameDetections:
     obstacles: list[DetectionResult] = field(default_factory=list)
     all_detections: list[DetectionResult] = field(default_factory=list)
     free_space_ratio: float = 1.0
+    free_mask: np.ndarray | None = None
+    obstacle_mask: np.ndarray | None = None
+    unknown_mask: np.ndarray | None = None
+    free_sectors: np.ndarray | None = None
+    navigable_heading: float = 0.0
+    navigable_width: float = 0.0
+    freespace_processing_ms: float = 0.0
     timestamp: float = 0.0
     frame_id: int = 0
     inference_ms: float = 0.0
