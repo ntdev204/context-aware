@@ -314,21 +314,51 @@ class GroundSegmenter:
         if sectors.size == 0 or float(np.max(sectors)) <= 0.0:
             return 0.0, 0.0
 
-        best = int(np.argmax(sectors))
-        if float(sectors[best]) < self.sector_free_threshold:
+        free_enough = (
+            np.asarray(sectors, dtype=np.float32).reshape(-1) >= self.sector_free_threshold
+        )
+        if not np.any(free_enough):
             return 0.0, 0.0
 
-        left = best
-        right = best
-        while left - 1 >= 0 and sectors[left - 1] >= self.sector_free_threshold:
-            left -= 1
-        while right + 1 < sectors.size and sectors[right + 1] >= self.sector_free_threshold:
-            right += 1
+        runs: list[tuple[int, int]] = []
+        start: int | None = None
+        for idx, is_free in enumerate(free_enough):
+            if is_free and start is None:
+                start = idx
+            elif not is_free and start is not None:
+                runs.append((start, idx - 1))
+                start = None
+        if start is not None:
+            runs.append((start, sectors.size - 1))
+
+        center_boundary = sectors.size / 2.0
+        center_runs = [run for run in runs if float(run[0]) <= center_boundary <= float(run[1] + 1)]
+        if center_runs:
+            left, right = max(
+                center_runs,
+                key=lambda run: (run[1] - run[0], np.mean(sectors[run[0] : run[1] + 1])),
+            )
+            heading_override: float | None = 0.0
+        else:
+
+            def run_score(run: tuple[int, int]) -> tuple[float, int, float]:
+                run_center = (run[0] + run[1] + 1) / 2.0
+                distance_to_center = abs(run_center - center_boundary)
+                run_width = run[1] - run[0] + 1
+                run_quality = float(np.mean(sectors[run[0] : run[1] + 1]))
+                return (-distance_to_center, run_width, run_quality)
+
+            left, right = max(runs, key=run_score)
+            heading_override = None
 
         fov = self._fov_rad(frame_w)
         sector_width = fov / sectors.size
         center_index = (left + right + 1) / 2.0
-        heading = -fov / 2.0 + center_index * sector_width
+        heading = (
+            heading_override
+            if heading_override is not None
+            else -fov / 2.0 + center_index * sector_width
+        )
         width = (right - left + 1) * sector_width
         return float(heading), float(width)
 
