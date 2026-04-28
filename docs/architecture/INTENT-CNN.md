@@ -136,7 +136,7 @@ for person in persons:
 #### B. Safety Monitor (giám sát an toàn)
 
 ```python
-# Trong safety_monitor.py — Intent override bảo vệ tối thượng:
+# Trong heuristic_policy.py — intent override bảo vệ tối thượng:
 
 for pred in intent_preds:
     if pred.intent_class == ERRATIC and pred.confidence > 0.6:
@@ -706,7 +706,7 @@ Phase 4: TensorRT Optimization
 | `src/perception/roi_extractor.py` | Crop + resize person ROI |
 | `src/perception/tracker.py` | Track ID assignment (ByteTrack) |
 | `src/navigation/heuristic_policy.py` | Uses intent for STOP/AVOID decisions |
-| `src/navigation/safety_monitor.py` | ERRATIC override |
+| `src/navigation/heuristic_policy.py` | ERRATIC override |
 | `src/navigation/context_builder.py` | Packs intent into observation vector |
 | `src/experience/collector.py` | Logs intent predictions to HDF5 |
 | `src/main.py` | Pipeline orchestration |

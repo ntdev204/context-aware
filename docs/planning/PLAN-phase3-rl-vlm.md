@@ -390,8 +390,8 @@ training/configs/rl_config.yaml    (NEW/MODIFY)
   else:
       nav_cmd = heuristic_policy.decide(observation)
 
-  # Safety monitor ALWAYS runs regardless of policy
-  nav_cmd = safety_monitor.check(nav_cmd, detections, observation)
+  # Heuristic policy owns rule-based safety decisions before command publishing
+  nav_cmd = heuristic_policy.decide(observation, detections, intent_preds)
   ```
 
 **Files**:
