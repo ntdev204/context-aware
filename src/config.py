@@ -13,7 +13,6 @@ _DEFAULT_CONFIG_DIR = Path(__file__).parent.parent / "config"
 
 
 class Config:
-
     def __init__(self, data: dict[str, Any]) -> None:
         self._data = data
 

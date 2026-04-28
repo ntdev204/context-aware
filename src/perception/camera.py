@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class Camera:
-
     def __init__(
         self,
         device_id: int = 0,

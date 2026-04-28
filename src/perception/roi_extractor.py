@@ -24,7 +24,6 @@ class PersonROI:
 
 
 class ROIExtractor:
-
     def __init__(
         self,
         output_width: int = CNN_INPUT_W,

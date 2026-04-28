@@ -56,6 +56,7 @@ class FrameDetections:
     free_sectors: np.ndarray | None = None
     navigable_heading: float = 0.0
     navigable_width: float = 0.0
+    navigable_width_m: float = 0.0
     freespace_processing_ms: float = 0.0
     timestamp: float = 0.0
     frame_id: int = 0

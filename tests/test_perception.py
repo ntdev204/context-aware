@@ -148,6 +148,15 @@ def make_floor_depth(h=120, w=160, fx=120.0, fy=120.0, cx=80.0, cy=60.0, height=
     return depth
 
 
+def make_floor_rgb(h=120, w=160):
+    frame = np.zeros((h, w, 3), dtype=np.uint8)
+    frame[:60, :] = (150, 120, 110)  # wall/background
+    frame[60:, :] = (116, 118, 112)  # floor
+    frame[70::16, :] = (94, 96, 92)  # tile grout lines
+    frame[60:, 20::32] = (96, 98, 94)
+    return frame
+
+
 class TestGroundSegmenter:
     def _segmenter(self):
         return GroundSegmenter(
@@ -186,6 +195,49 @@ class TestGroundSegmenter:
         assert result.free_space_ratio == 0.0
         assert result.unknown_mask.mean() == 1.0
 
+    def test_bbox_fallback_when_depth_missing(self):
+        seg = self._segmenter()
+        det = make_detection(130, 55, 155, 120, cls="obstacle")
+        fd = make_frame_det(obstacles=[det])
+
+        result = seg.segment(None, detections=fd, frame_shape=(120, 160, 3))
+
+        assert result.free_space_ratio > 0.25
+        assert result.free_mask[100, 30]
+        assert result.obstacle_mask[80:120, 130:155].mean() > 0.9
+        assert result.free_sectors[1] > result.free_sectors[-1]
+
+    def test_rgb_floor_fallback_detects_visible_floor(self):
+        seg = self._segmenter()
+        frame = make_floor_rgb()
+        det = make_detection(125, 60, 155, 120, cls="obstacle")
+        fd = make_frame_det(obstacles=[det])
+
+        result = seg.segment(None, detections=fd, frame_shape=frame.shape, color_frame=frame)
+
+        assert result.free_space_ratio > 0.35
+        assert result.navigable_width_m >= 1.0
+        assert result.free_mask[95, 30]
+        assert not result.free_mask[30, 30]
+        assert result.obstacle_mask[85:115, 130:150].mean() > 0.9
+        assert result.free_sectors[1] > result.free_sectors[-1]
+
+    def test_width_gate_blocks_too_narrow_floor(self):
+        seg = self._segmenter()
+        frame = make_floor_rgb()
+        fd = make_frame_det(
+            obstacles=[
+                make_detection(0, 55, 70, 120, cls="obstacle"),
+                make_detection(95, 55, 160, 120, cls="obstacle"),
+            ]
+        )
+
+        result = seg.segment(None, detections=fd, frame_shape=frame.shape, color_frame=frame)
+
+        assert result.free_space_ratio > 0.0
+        assert result.navigable_width_m < 1.0
+        assert np.max(result.free_sectors) == 0.0
+
     def test_yolo_bbox_fusion_blocks_free_region(self):
         seg = self._segmenter()
         depth = make_floor_depth()
@@ -198,11 +250,17 @@ class TestGroundSegmenter:
     def test_corridor_heading_prefers_open_right_side(self):
         seg = self._segmenter()
         depth = make_floor_depth()
-        det = make_detection(0, 0, 120, 120, cls="obstacle")
+        det = make_detection(0, 0, 40, 120, cls="obstacle")
         fd = make_frame_det(obstacles=[det])
         result = seg.segment(depth, detections=fd)
         assert result.navigable_heading > 0.0
         assert result.free_sectors[-1] > result.free_sectors[0]
+
+    def test_corridor_requires_free_threshold(self):
+        seg = self._segmenter()
+        heading, width = seg._navigable_corridor(np.full(8, 0.10, dtype=np.float32), 160)
+        assert heading == 0.0
+        assert width == 0.0
 
 
 # ── CNN Intent Model ─────────────────────────────────────────────────────────

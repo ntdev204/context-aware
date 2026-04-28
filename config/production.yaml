@@ -57,6 +57,14 @@ perception:
     safety_margin_px: 18
     sector_count: 8
     sector_free_threshold: 0.55
+    bbox_fallback_enabled: true
+    fallback_roi_top_ratio: 0.45
+    fallback_roi_top_width_ratio: 0.35
+    fallback_max_obstacle_ratio: 0.65
+    rgb_floor_fallback_enabled: true
+    floor_color_threshold: 48.0
+    floor_seed_bottom_ratio: 0.22
+    min_navigable_width_m: 1.0
 
   tracker:
     max_age: 60      # giữ track lâu hơn khi người bị che khuất tạm thời

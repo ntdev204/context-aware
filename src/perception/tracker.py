@@ -21,7 +21,6 @@ except ImportError:
 
 
 class _FallbackTracker:
-
     def __init__(
         self,
         max_age: int = 30,
@@ -93,7 +92,6 @@ class _FallbackTracker:
 
 
 class Tracker:
-
     def __init__(
         self,
         max_age: int = 30,
