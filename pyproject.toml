@@ -18,6 +18,7 @@ dependencies = [
     "fastapi>=0.110.0,<1.0.0",
     "uvicorn[standard]>=0.29.0,<1.0.0",
     "websockets>=12.0",
+    "typing_extensions>=4.12.2,<5.0.0",
     "mediapipe==0.10.18",
     "opencv-contrib-python==4.5.4.60; platform_machine == 'aarch64'",
     "setuptools<70.0.0",
