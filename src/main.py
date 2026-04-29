@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import signal
 import threading
 import time
@@ -34,7 +33,6 @@ from .experience.roi_saver import ROISaver
 from .navigation import (
     ContextBuilder,
     HeuristicPolicy,
-    LocalPlanner,
     NavigationCommand,
     NavigationMode,
     RobotState,
@@ -42,7 +40,6 @@ from .navigation import (
 from .perception import (
     Camera,
     FrameDetections,
-    GestureDetector,
     IntentCNN,
     ROIExtractor,
     Tracker,
@@ -185,11 +182,6 @@ def _build_pipeline(cfg) -> dict:
         max_batch_size=per_cfg.get("cnn_intent.max_batch_size", 5),
     )
 
-    gesture_detector = GestureDetector(
-        enabled=per_cfg.get("gesture.enabled", True),
-        min_confidence=per_cfg.get("gesture.min_confidence", 0.65),
-    )
-
     context_builder = ContextBuilder(
         temporal_stack_size=ctx_cfg.get("temporal_stack_size", 1),
         state_version=ctx_cfg.get("state_version", "v1-snapshot"),
@@ -197,38 +189,12 @@ def _build_pipeline(cfg) -> dict:
     )
 
     heuristic_cfg = nav_cfg.get("heuristic", {})
-    planner_cfg = nav_cfg.get("local_planner", {})
-    local_planner = (
-        LocalPlanner(
-            enabled=planner_cfg.get("enabled", True),
-            follow_target_distance=heuristic_cfg.get("follow_target_distance", 2.0),
-            max_plan_distance=planner_cfg.get("max_plan_distance", 5.0),
-            robot_radius=planner_cfg.get("robot_radius", 0.25),
-            safety_margin=planner_cfg.get("safety_margin", 0.20),
-            corridor_width=planner_cfg.get("corridor_width", 0.85),
-            detour_offsets=planner_cfg.get("detour_offsets", [0.75, 1.10]),
-            lidar_block_distance=planner_cfg.get("lidar_block_distance", 0.65),
-            camera_obstacle_radius=planner_cfg.get("camera_obstacle_radius", 0.35),
-        )
-        if planner_cfg.get("enabled", True)
-        else None
-    )
-
     heuristic_policy = HeuristicPolicy(
         cruise_velocity=heuristic_cfg.get("cruise_velocity", 1.0),
         cautious_velocity=heuristic_cfg.get("cautious_velocity", 0.6),
         avoid_velocity=heuristic_cfg.get("avoid_velocity", 0.3),
-        follow_max_vel=heuristic_cfg.get("follow_max_vel", 0.8),
-        follow_min_vel=heuristic_cfg.get("follow_min_vel", 0.3),
         hard_stop_distance=safe_cfg.get("hard_stop_distance_person", 2.0),
         slow_down_distance=safe_cfg.get("slow_down_distance", 3.0),
-        auto_follow=heuristic_cfg.get("auto_follow", False),
-        follow_target_distance=heuristic_cfg.get("follow_target_distance", 2.0),
-        follow_deadband=heuristic_cfg.get("follow_deadband", 0.08),
-        follow_kp=heuristic_cfg.get("follow_kp", 1.0),
-        target_lost_timeout_s=heuristic_cfg.get("target_lost_timeout_s", 300.0),
-        follow_min_distance=heuristic_cfg.get("follow_min_distance", 0.5),
-        local_planner=local_planner,
     )
 
     publisher = ZMQPublisher(
@@ -279,7 +245,6 @@ def _build_pipeline(cfg) -> dict:
         tracker=tracker,
         roi_extractor=roi_extractor,
         intent_cnn=intent_cnn,
-        gesture_detector=gesture_detector,
         context_builder=context_builder,
         heuristic_policy=heuristic_policy,
         publisher=publisher,
@@ -302,13 +267,6 @@ class AIServer:
         self._state = ServerState()
         self._components = _build_pipeline(cfg)
         self._perception_worker: _AsyncPerceptionWorker | None = None
-        self._fist_seen_count = 0
-        self._fist_confirm_frames = int(cfg.get("perception.gesture.fist_confirm_frames", 3))
-        self._open_palm_seen_count = 0
-        self._open_palm_confirm_frames = int(
-            cfg.get("perception.gesture.open_palm_confirm_frames", 5)
-        )
-        self._open_palm_track_id = -1
 
     def start(self) -> None:
         c = self._components
@@ -403,8 +361,6 @@ class AIServer:
                 frame_det.obstacles,
                 cmd.mode.name,
                 metrics.fps,
-                cmd.follow_target_id,
-                getattr(c["heuristic_policy"], "last_plan", None),
                 copy=False,
             )
             if dev_mode:
@@ -440,7 +396,6 @@ class AIServer:
         c = self._components
         yolo = c["yolo"]
         tracker = c["tracker"]
-        gesture_detector = c["gesture_detector"]
         roi_ex = c["roi_extractor"]
         cnn = c["intent_cnn"]
         ctx_bld = c["context_builder"]
@@ -450,8 +405,6 @@ class AIServer:
 
         frame_det = yolo.detect(frame, frame_id=frame_id, depth_frame=depth_frame)
         frame_det = tracker.update(frame_det, frame.shape)
-        gesture = gesture_detector.detect(frame)
-        self._handle_follow_gesture(frame, frame_det, gesture, policy)
 
         rois = roi_ex.extract(frame, frame_det)
         intent_preds = cnn.predict_batch(rois) or []
@@ -487,107 +440,6 @@ class AIServer:
             frame_id=frame_id,
             processed_at=time.monotonic(),
         )
-
-    def _handle_follow_gesture(
-        self,
-        frame,
-        frame_det: FrameDetections,
-        gesture,
-        policy: HeuristicPolicy,
-    ) -> None:
-        gesture_payload = {
-            "gesture": gesture.gesture,
-            "confidence": round(float(gesture.confidence), 3),
-            "fingers": int(gesture.fingers),
-            "bbox": list(gesture.bbox) if gesture.bbox else None,
-            "timestamp": time.time(),
-        }
-        self._state.update_gesture(gesture_payload)
-
-        if gesture.gesture == "fist":
-            self._fist_seen_count += 1
-            if self._fist_seen_count >= self._fist_confirm_frames:
-                policy.set_follow_target(-1)
-                self._state.set_follow_lock(None)
-                self._state.set_mode_override("STOP")
-                self._open_palm_seen_count = 0
-                self._open_palm_track_id = -1
-                logger.info("Follow released by fist gesture")
-            return
-
-        if gesture.gesture != "fist":
-            self._fist_seen_count = 0
-
-        if gesture.gesture == "open_palm":
-            person = self._select_person_for_gesture(frame_det.persons, gesture.bbox)
-            if person is not None and not self._is_gesture_likely_face_region(person, gesture.bbox):
-                if self._open_palm_track_id == person.track_id:
-                    self._open_palm_seen_count += 1
-                else:
-                    self._open_palm_track_id = person.track_id
-                    self._open_palm_seen_count = 1
-
-                if self._open_palm_seen_count >= self._open_palm_confirm_frames:
-                    policy.set_follow_target(person.track_id)
-                    self._state.set_mode_override(None)
-                    self._state.set_follow_lock(
-                        {
-                            "track_id": person.track_id,
-                            "method": "open_palm",
-                            "locked_at": time.time(),
-                        }
-                    )
-                    self._open_palm_seen_count = 0
-                    self._open_palm_track_id = -1
-                    logger.info("Follow locked by open_palm gesture: track_id=%d", person.track_id)
-            else:
-                self._open_palm_seen_count = 0
-                self._open_palm_track_id = -1
-                if person is not None:
-                    logger.debug("Ignoring open_palm candidate in face/head region")
-        else:
-            self._open_palm_seen_count = 0
-            self._open_palm_track_id = -1
-
-    @staticmethod
-    def _is_gesture_likely_face_region(person, gesture_bbox) -> bool:
-        """Reject open-palm candidates that look like the detected person's face/head."""
-        if gesture_bbox is None:
-            return True
-
-        px1, py1, px2, py2 = person.bbox
-        gx1, gy1, gx2, gy2 = gesture_bbox
-        pw = max(1, px2 - px1)
-        ph = max(1, py2 - py1)
-        cx = ((gx1 + gx2) * 0.5 - px1) / pw
-        cy = ((gy1 + gy2) * 0.5 - py1) / ph
-
-        # Palm candidates in the upper, centered part of the person box are usually
-        # face/head detections. A valid control palm should be clearly outside that
-        # zone, typically to one side of the body.
-        return 0.25 <= cx <= 0.75 and 0.0 <= cy <= 0.42
-
-    @staticmethod
-    def _select_person_for_gesture(persons, gesture_bbox) -> Any | None:
-        persons = [p for p in persons if not getattr(p, "stale", False)]
-        if not persons:
-            return None
-        if gesture_bbox is None:
-            return max(persons, key=lambda p: (p.bbox[2] - p.bbox[0]) * (p.bbox[3] - p.bbox[1]))
-
-        gx1, gy1, gx2, gy2 = gesture_bbox
-
-        def score(person) -> float:
-            x1, y1, x2, y2 = person.bbox
-            ix1, iy1 = max(x1, gx1), max(y1, gy1)
-            ix2, iy2 = min(x2, gx2), min(y2, gy2)
-            inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
-            hand_area = max(1, (gx2 - gx1) * (gy2 - gy1))
-            person_area = max(1, (x2 - x1) * (y2 - y1))
-            return inter / hand_area + inter / person_area
-
-        best = max(persons, key=score)
-        return best if score(best) > 0.01 else None
 
     def _annotate_intents(self, frame_det: FrameDetections, intent_preds: list[Any] | None) -> None:
         if not intent_preds:
@@ -643,18 +495,10 @@ class AIServer:
             "timestamp": frame_det.timestamp,
             "frame_id": frame_det.frame_id,
             "mode": cmd.mode.name,
-            "follow_target_id": cmd.follow_target_id,
             "inference_ms": frame_det.inference_ms,
             "persons": [_det_payload(p) for p in frame_det.persons],
             "obstacles": [_det_payload(o) for o in frame_det.obstacles],
-            "gesture": self._state.get_gesture(),
-            "follow_lock": self._state.get_follow_lock(),
-            "local_plan": self._local_plan_payload(),
         }
-
-    def _local_plan_payload(self) -> dict[str, Any] | None:
-        plan = getattr(self._components["heuristic_policy"], "last_plan", None)
-        return plan.to_payload() if plan is not None else None
 
     def _update_metrics(
         self,

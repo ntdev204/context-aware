@@ -15,7 +15,7 @@ class NavigationMode(IntEnum):
     CRUISE = 0
     CAUTIOUS = 1
     AVOID = 2
-    FOLLOW = 3
+    RESERVED = 3
     STOP = 4
 
 
@@ -28,7 +28,6 @@ class NavigationCommand:
     velocity_scale: float = 0.0  # [-1.0, 1.0] — âm = lùi, dương = tiến (Linear X)
     velocity_y: float = 0.0  # [-1.0, 1.0] — âm = phải, dương = trái (Linear Y - Mecanum)
     heading_offset: float = 0.0  # radians [-π/4, π/4] (Angular Z)
-    follow_target_id: int = -1  # track_id to follow
     confidence: float = 1.0  # policy confidence [0, 1]
     safety_override: bool = False  # True if safety monitor changed cmd
     timestamp: float = field(default_factory=time.time)

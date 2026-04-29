@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import struct
 import time
-import json
 
 import pytest
 
@@ -42,8 +42,8 @@ class TestNavCommandSerialization:
         assert result is cmd
 
     def test_repr_contains_mode(self):
-        cmd = NavigationCommand(mode=NavigationMode.FOLLOW, velocity_scale=0.5)
-        assert "FOLLOW" in repr(cmd)
+        cmd = NavigationCommand(mode=NavigationMode.STOP, velocity_scale=0.0)
+        assert "STOP" in repr(cmd)
 
     def test_is_safe_to_move_stop(self):
         cmd = NavigationCommand(mode=NavigationMode.STOP, velocity_scale=0.0)
@@ -68,7 +68,6 @@ class TestZMQPublisherEncoding:
             mode=NavigationMode.AVOID,
             velocity_scale=0.4,
             heading_offset=0.15,
-            follow_target_id=-1,
             confidence=0.85,
             safety_override=False,
         )
@@ -85,7 +84,6 @@ class TestZMQPublisherEncoding:
             mode=NavigationMode.CRUISE,
             velocity_scale=0.7,
             heading_offset=-0.1,
-            follow_target_id=-1,
             timestamp=1234567.8,
             confidence=0.9,
             safety_override=False,
