@@ -132,7 +132,8 @@ class ExperienceBuffer:
                     "intent_classes": np.array(intent_classes or [0], dtype=np.int32),
                     "intent_confs": np.array(intent_confs or [0.0], dtype=np.float32),
                     "person_distances": np.array(person_distances or [0.0], dtype=np.float32),
-                    "distance_sources": [s.encode("utf-8") for s in distance_sources] or [b"bbox"],
+                    "distance_sources": [s.encode("utf-8") for s in distance_sources]
+                    or [b"unknown"],
                     "person_cxs": np.array(person_cxs or [0.0], dtype=np.float32),
                     "person_cys": np.array(person_cys or [0.0], dtype=np.float32),
                     "person_tids": np.array(person_tids or [-1], dtype=np.int32),

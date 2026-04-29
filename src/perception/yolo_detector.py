@@ -35,7 +35,7 @@ class DetectionResult:
     confidence: float
     track_id: int = -1  # assigned by tracker
     distance: float = 0.0  # calibrated physical distance in metres
-    distance_source: str = "bbox"  # "depth" | "bbox"
+    distance_source: str = "unknown"  # "depth" | "unknown"
     intent_class: int = -1
     intent_name: str = "UNKNOWN"
     intent_confidence: float = 0.0
@@ -230,11 +230,11 @@ class YOLODetector:
         class_name: str,
         depth_frame: np.ndarray | None,
     ) -> tuple[float, str]:
-        """Hybrid distance estimation: depth camera primary, bbox heuristic fallback.
+        """Depth-only distance estimation.
 
         Returns
         -------
-        (distance_metres, source)  where source is "depth" or "bbox".
+        (distance_metres, source) where source is "depth" or "unknown".
         """
         # Depth estimation (Astra S, uint16 mm)
         if depth_frame is not None:
@@ -256,7 +256,4 @@ class YOLODetector:
                 depth_m = float(np.median(roi[valid_mask])) / 1000.0
                 return round(depth_m, 3), "depth"
 
-        bbox_height = max(1, y2 - y1)
-        k_factor = 1.5 if class_name == "person" else 0.5
-        dist_m = max(0.2, k_factor * frame_h / bbox_height)
-        return round(dist_m, 3), "bbox"
+        return 0.0, "unknown"

@@ -331,9 +331,10 @@ class TestYOLODepthRange:
     def test_depth_distance_ignores_blind_zone_under_two_metres(self):
         depth = np.full((40, 40), 1500, dtype=np.uint16)
 
-        _, source = YOLODetector._estimate_distance(10, 10, 30, 30, 40, 40, "person", depth)
+        distance, source = YOLODetector._estimate_distance(10, 10, 30, 30, 40, 40, "person", depth)
 
-        assert source == "bbox"
+        assert source == "unknown"
+        assert distance == 0.0
 
 
 # ── CNN Intent Model ─────────────────────────────────────────────────────────
