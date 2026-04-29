@@ -39,7 +39,6 @@ class HeuristicPolicy:
 
     def __init__(
         self,
-        cruise_free_space_threshold: float = 0.8,
         cruise_velocity: float = 1.0,
         cautious_velocity: float = 0.6,
         avoid_velocity: float = 0.3,
@@ -54,7 +53,6 @@ class HeuristicPolicy:
         target_lost_timeout_s: float = 300.0,
         follow_min_distance: float = 0.5,
     ) -> None:
-        self.cruise_threshold = cruise_free_space_threshold
         self.cruise_vel = cruise_velocity
         self.cautious_vel = cautious_velocity
         self.avoid_vel = avoid_velocity
@@ -91,9 +89,7 @@ class HeuristicPolicy:
 
         persons = frame_det.persons
         obstacles = frame_det.obstacles
-        free_ratio = frame_det.free_space_ratio
-        free_sectors = frame_det.free_sectors
-        front_free = self._front_free_ratio(free_sectors, free_ratio)
+        front_free = 1.0
 
         intent_map = {p.track_id: p for p in intent_preds}
 
@@ -104,7 +100,7 @@ class HeuristicPolicy:
         # tại follow_min_distance (0.5m). KHÔNG dùng hard_stop_dist (2.0m) ở đây vì sẽ
         # chặn lệnh lùi ra xa khi người đứng trong khoảng (0.5m, 2.0m).
         if self.auto_follow:
-            cmd = self._decide_follow(persons, free_ratio, intent_map)
+            cmd = self._decide_follow(persons, 1.0, intent_map)
             cmd.velocity_y = 0.0  # strafe tắt: chỉ dùng vx để bám thẳng
             return self._limit_forward_by_front_sector(cmd, front_free)
 
@@ -145,8 +141,8 @@ class HeuristicPolicy:
             )
             return self._limit_forward_by_front_sector(cmd, front_free)
 
-        if free_ratio >= self.cruise_threshold and not persons:
-            return self._decide_cruise_from_freespace(frame_det, front_free, confidence=0.90)
+        if not persons:
+            return self._make(NavigationMode.CRUISE, self.cruise_vel, 0.0, confidence=0.90)
 
         if persons:
             vel = self.cautious_vel
@@ -155,31 +151,7 @@ class HeuristicPolicy:
             cmd = self._make(NavigationMode.CAUTIOUS, vel, 0.0, confidence=0.75)
             return self._limit_forward_by_front_sector(cmd, front_free)
 
-        return self._decide_cruise_from_freespace(frame_det, front_free, confidence=0.70)
-
-    def _decide_cruise_from_freespace(
-        self,
-        frame_det: FrameDetections,
-        front_free: float,
-        confidence: float,
-    ) -> NavigationCommand:
-        heading = self._safe_heading(frame_det.navigable_heading)
-
-        if front_free < 0.20:
-            return self._make(
-                NavigationMode.STOP,
-                0.0,
-                0.0,
-                confidence=0.92,
-                safety_override=True,
-            )
-
-        if front_free < 0.50:
-            vel = max(0.0, min(self.cautious_vel, self.cruise_vel * (front_free / 0.50)))
-            return self._make(NavigationMode.CAUTIOUS, vel, heading, confidence=0.78)
-
-        vel = self.cruise_vel * (0.5 + 0.5 * min(front_free, 1.0))
-        return self._make(NavigationMode.CRUISE, vel, heading, confidence=confidence)
+        return self._make(NavigationMode.CRUISE, self.cruise_vel, 0.0, confidence=0.70)
 
     def _limit_forward_by_front_sector(
         self,
@@ -218,12 +190,6 @@ class HeuristicPolicy:
         else:
             front = arr[mid : mid + 1]
         return float(np.clip(np.mean(front), 0.0, 1.0))
-
-    @staticmethod
-    def _safe_heading(heading: float) -> float:
-        if not math.isfinite(heading):
-            return 0.0
-        return float(np.clip(heading, -math.pi / 4, math.pi / 4))
 
     def _decide_follow(
         self,

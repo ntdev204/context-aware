@@ -23,7 +23,6 @@ CLASS_NAMES = [
     "dynamic_hazard",  # Động: xe đẩy hành lý, vali bị rớt, quả bóng
     "door",
     "wall",
-    "free_space",
 ]
 CLASS_IDS = {name: idx for idx, name in enumerate(CLASS_NAMES)}
 
@@ -161,8 +160,6 @@ class YOLODetector:
             return frame_det
 
         boxes = results[0].boxes
-        free_pixels = 0
-        total_pixels = h * w
 
         for box in boxes:
             cls_id = int(box.cls[0])
@@ -193,12 +190,6 @@ class YOLODetector:
                 frame_det.persons.append(det)
             elif class_name in ("obstacle", "static_obstacle", "dynamic_hazard", "door", "wall"):
                 frame_det.obstacles.append(det)
-            elif class_name == "free_space":
-                free_pixels += (x2 - x1) * (y2 - y1)
-
-        frame_det.free_space_ratio = (
-            min(1.0, free_pixels / total_pixels) if total_pixels > 0 else 1.0
-        )
         return frame_det
 
     @staticmethod

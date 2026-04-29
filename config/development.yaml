@@ -32,35 +32,7 @@ perception:
         "dynamic_hazard",
         "door",
         "wall",
-        "free_space",
       ]
-
-  freespace:
-    enabled: false
-    fx: 570.0
-    fy: 570.0
-    cx: 320.0
-    cy: 240.0
-    camera_height_m: 0.50
-    camera_pitch_deg: 0.0
-    depth_min_mm: 2000
-    depth_max_mm: 8000
-    downscale: 4
-    ground_tolerance_m: 0.08
-    obstacle_height_m: 0.10
-    safety_margin_px: 18
-    sector_count: 8
-    sector_free_threshold: 0.55
-    bbox_fallback_enabled: true
-    fallback_roi_top_ratio: 0.45
-    fallback_roi_top_width_ratio: 0.35
-    fallback_max_obstacle_ratio: 0.65
-    rgb_floor_fusion_enabled: true
-    rgb_floor_fallback_enabled: true
-    floor_color_threshold: 48.0
-    floor_seed_bottom_ratio: 0.22
-    near_floor_blind_distance_m: 2.0
-    min_navigable_width_m: 1.0
 
   tracker:
     max_age: 30
@@ -79,7 +51,7 @@ perception:
 
 context:
   temporal_stack_size: 1
-  state_version: "v2-camera-freespace"
+  state_version: "v2-camera"
   observation_dim: 114
   occupancy_grid_size: 8
 
@@ -87,7 +59,6 @@ navigation:
   policy_type: heuristic
 
   heuristic:
-    cruise_free_space_threshold: 0.8
     cruise_velocity: 1.0
     cautious_velocity: 0.6
     avoid_velocity: 0.3

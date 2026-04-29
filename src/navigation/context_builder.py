@@ -12,14 +12,12 @@ Observation vector layout (114 floats when k=1):
     [2]      nearest_person_angle      (float, radians)
     [3]      nearest_obstacle_distance (float, metres)
     [4]      nearest_obstacle_angle    (float, radians)
-    [5]      free_space_ratio          (float, 0-1)
+    [5]      reserved                  (float, currently 0.0)
     [6-69]   occupancy_grid            (8×8 = 64 floats, 0=free 1=occupied)
     [70-93]  person_intents            (3 persons × 8 features)
     [94-96]  robot_velocity            (vx, vy, vθ)
     [97-103] previous_action           (velocity_scale, heading_offset, mode×5 one-hot)
-    [104-111] camera_free_sectors      (8 left-to-right camera-FOV ratios)
-    [112]    navigable_heading         (normalised by π/4)
-    [113]    navigable_width           (normalised by π/2)
+    [104-113] reserved                 (10 floats, currently 0.0)
 """
 
 from __future__ import annotations
@@ -73,7 +71,7 @@ class ContextBuilder:
     def __init__(
         self,
         temporal_stack_size: int = 1,
-        state_version: str = "v2-camera-freespace",
+        state_version: str = "v2-camera",
         occupancy_grid_size: int = GRID_SIZE,
     ) -> None:
         self.temporal_stack_size = temporal_stack_size
@@ -154,7 +152,7 @@ class ContextBuilder:
             obs[3] = 1.0
             obs[4] = 0.0
 
-        obs[5] = frame_det.free_space_ratio
+        obs[5] = 0.0
 
         # -- Occupancy grid [6:70] ----------------------------------
         grid = self._build_occupancy_grid(frame_det)
@@ -186,15 +184,8 @@ class ContextBuilder:
             mode_oh[int(self._prev_action.mode)] = 1.0
             obs[99:104] = mode_oh
 
-        # -- Camera free-space geometry [104:114] --------------------
-        sectors = frame_det.free_sectors
-        if sectors is not None:
-            sectors_arr = np.asarray(sectors, dtype=np.float32).reshape(-1)
-            n = min(8, sectors_arr.size)
-            obs[104 : 104 + n] = np.clip(sectors_arr[:n], 0.0, 1.0)
-
-        obs[112] = float(np.clip(frame_det.navigable_heading / (math.pi / 4), -1.0, 1.0))
-        obs[113] = float(np.clip(frame_det.navigable_width / (math.pi / 2), 0.0, 1.0))
+        # [104:114] reserved for backward-compatible observation width.
+        obs[104:114] = 0.0
 
         return obs
 

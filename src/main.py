@@ -40,13 +40,12 @@ from .navigation import (
 from .perception import (
     Camera,
     FrameDetections,
-    GroundSegmenter,
     IntentCNN,
     ROIExtractor,
     Tracker,
     YOLODetector,
 )
-from .streaming import draw_detections, draw_freespace_overlay, encode_jpeg
+from .streaming import draw_detections, encode_jpeg
 
 logger = logging.getLogger(__name__)
 
@@ -161,40 +160,6 @@ def _build_pipeline(cfg) -> dict:
         input_size=per_cfg.get("yolo.input_size", 640),
     )
 
-    freespace_cfg = per_cfg.get("freespace", {})
-    freespace_enabled = bool(freespace_cfg.get("enabled", cam_cfg.get("backend", "usb") == "astra"))
-    ground_segmenter = (
-        GroundSegmenter(
-            fx=freespace_cfg.get("fx", 570.0),
-            fy=freespace_cfg.get("fy", 570.0),
-            cx=freespace_cfg.get("cx", 320.0),
-            cy=freespace_cfg.get("cy", 240.0),
-            camera_height_m=freespace_cfg.get("camera_height_m", 0.50),
-            camera_pitch_deg=freespace_cfg.get("camera_pitch_deg", 0.0),
-            depth_min_mm=freespace_cfg.get("depth_min_mm", 2000),
-            depth_max_mm=freespace_cfg.get("depth_max_mm", 8000),
-            downscale=freespace_cfg.get("downscale", 4),
-            ground_tolerance_m=freespace_cfg.get("ground_tolerance_m", 0.08),
-            obstacle_height_m=freespace_cfg.get("obstacle_height_m", 0.10),
-            safety_margin_px=freespace_cfg.get("safety_margin_px", 18),
-            sector_count=freespace_cfg.get("sector_count", 8),
-            sector_free_threshold=freespace_cfg.get("sector_free_threshold", 0.55),
-            fov_deg=freespace_cfg.get("fov_deg", None),
-            bbox_fallback_enabled=freespace_cfg.get("bbox_fallback_enabled", True),
-            fallback_roi_top_ratio=freespace_cfg.get("fallback_roi_top_ratio", 0.45),
-            fallback_roi_top_width_ratio=freespace_cfg.get("fallback_roi_top_width_ratio", 0.35),
-            fallback_max_obstacle_ratio=freespace_cfg.get("fallback_max_obstacle_ratio", 0.65),
-            rgb_floor_fusion_enabled=freespace_cfg.get("rgb_floor_fusion_enabled", True),
-            rgb_floor_fallback_enabled=freespace_cfg.get("rgb_floor_fallback_enabled", True),
-            floor_color_threshold=freespace_cfg.get("floor_color_threshold", 48.0),
-            floor_seed_bottom_ratio=freespace_cfg.get("floor_seed_bottom_ratio", 0.22),
-            near_floor_blind_distance_m=freespace_cfg.get("near_floor_blind_distance_m", 2.0),
-            min_navigable_width_m=freespace_cfg.get("min_navigable_width_m", 1.0),
-        )
-        if freespace_enabled
-        else None
-    )
-
     tracker = Tracker(
         max_age=per_cfg.get("tracker.max_age", 30),
         min_hits=per_cfg.get("tracker.min_hits", 3),
@@ -221,7 +186,6 @@ def _build_pipeline(cfg) -> dict:
 
     heuristic_cfg = nav_cfg.get("heuristic", {})
     heuristic_policy = HeuristicPolicy(
-        cruise_free_space_threshold=heuristic_cfg.get("cruise_free_space_threshold", 0.8),
         cruise_velocity=heuristic_cfg.get("cruise_velocity", 1.0),
         cautious_velocity=heuristic_cfg.get("cautious_velocity", 0.6),
         avoid_velocity=heuristic_cfg.get("avoid_velocity", 0.3),
@@ -283,7 +247,6 @@ def _build_pipeline(cfg) -> dict:
         camera=camera,
         yolo=yolo,
         tracker=tracker,
-        ground_segmenter=ground_segmenter,
         roi_extractor=roi_extractor,
         intent_cnn=intent_cnn,
         context_builder=context_builder,
@@ -386,7 +349,6 @@ class AIServer:
                 frame_det = FrameDetections(
                     timestamp=time.time(),
                     frame_id=frame_id,
-                    free_space_ratio=0.0,
                     frame_width=w,
                     frame_height=h,
                 )
@@ -397,7 +359,6 @@ class AIServer:
 
             metrics = self._state.get_metrics()
             annotated = frame.copy()
-            annotated = draw_freespace_overlay(annotated, frame_det, copy=False)
             annotated = draw_detections(
                 annotated,
                 frame_det.persons,
@@ -439,7 +400,6 @@ class AIServer:
         c = self._components
         yolo = c["yolo"]
         tracker = c["tracker"]
-        ground_segmenter = c["ground_segmenter"]
         roi_ex = c["roi_extractor"]
         cnn = c["intent_cnn"]
         ctx_bld = c["context_builder"]
@@ -448,14 +408,6 @@ class AIServer:
         exp_col = c["exp_collector"]
 
         frame_det = yolo.detect(frame, frame_id=frame_id, depth_frame=depth_frame)
-        if ground_segmenter is not None:
-            freespace = ground_segmenter.segment(
-                depth_frame,
-                detections=frame_det,
-                frame_shape=frame.shape,
-                color_frame=frame,
-            )
-            ground_segmenter.apply_to_frame(frame_det, freespace)
         frame_det = tracker.update(frame_det, frame.shape)
         rois = roi_ex.extract(frame, frame_det)
         intent_preds = cnn.predict_batch(rois) or []
@@ -545,16 +497,7 @@ class AIServer:
             "timestamp": frame_det.timestamp,
             "frame_id": frame_det.frame_id,
             "mode": cmd.mode.name,
-            "free_space_ratio": frame_det.free_space_ratio,
-            "free_sectors": (
-                frame_det.free_sectors.astype(float).tolist()
-                if frame_det.free_sectors is not None
-                else []
-            ),
-            "navigable_heading": frame_det.navigable_heading,
-            "navigable_width": frame_det.navigable_width,
-            "navigable_width_m": frame_det.navigable_width_m,
-            "inference_ms": frame_det.inference_ms + frame_det.freespace_processing_ms,
+            "inference_ms": frame_det.inference_ms,
             "persons": [_det_payload(p) for p in frame_det.persons],
             "obstacles": [_det_payload(o) for o in frame_det.obstacles],
         }
@@ -580,20 +523,18 @@ class AIServer:
             obstacles=len(frame_det.obstacles),
             buffer_size=buf_size,
             depth_coverage_pct=depth_coverage,
-            inference_ms=frame_det.inference_ms + frame_det.freespace_processing_ms,
+            inference_ms=frame_det.inference_ms,
             mode=cmd.mode.name,
             frame_id=frame_id,
         )
 
         logger.info(
-            "FPS=%.1f  mode=%s  persons=%d  buf=%d  depth_cov=%.0f%%  free=%.0f%%  fs=%.1fms",
+            "FPS=%.1f  mode=%s  persons=%d  buf=%d  depth_cov=%.0f%%",
             fps,
             cmd.mode.name,
             len(frame_det.persons),
             buf_size,
             depth_coverage,
-            frame_det.free_space_ratio * 100.0,
-            frame_det.freespace_processing_ms,
         )
 
     def _show_dev_window(self, vis) -> None:

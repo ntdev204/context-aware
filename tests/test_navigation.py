@@ -82,20 +82,18 @@ class TestContextBuilder:
         obs = cb.build(fd, [])
         assert obs.shape == (OBS_DIM * 3,)
 
-    def test_free_space_ratio_in_obs(self):
+    def test_reserved_obs_slot_is_zero(self):
         cb = ContextBuilder(temporal_stack_size=1)
         fd = make_fd(free_space=0.75)
         obs = cb.build(fd, [])
-        assert abs(obs[5] - 0.75) < 1e-4
+        assert obs[5] == 0.0
 
-    def test_camera_freespace_fields_in_obs(self):
+    def test_reserved_camera_geometry_slots_are_zero(self):
         cb = ContextBuilder(temporal_stack_size=1)
         sectors = np.linspace(0.0, 1.0, 8, dtype=np.float32)
         fd = make_fd(free_sectors=sectors, heading=math.pi / 8, width=math.pi / 4)
         obs = cb.build(fd, [])
-        assert np.allclose(obs[104:112], sectors)
-        assert abs(obs[112] - 0.5) < 1e-4
-        assert abs(obs[113] - 0.5) < 1e-4
+        assert np.allclose(obs[104:114], 0.0)
 
     def test_no_persons_distance_is_normalised(self):
         cb = ContextBuilder(temporal_stack_size=1)
@@ -197,7 +195,7 @@ class TestHeuristicPolicy:
         cmd = policy.decide(obs, make_fd(persons=[make_det()]), [])
         assert cmd.mode == NavigationMode.CAUTIOUS
 
-    def test_cruise_uses_navigable_heading(self):
+    def test_cruise_uses_zero_heading_without_freespace(self):
         policy = self._policy()
         obs = self._obs(free=0.95)
         fd = make_fd(
@@ -208,12 +206,11 @@ class TestHeuristicPolicy:
         )
         cmd = policy.decide(obs, fd, [])
         assert cmd.mode == NavigationMode.CRUISE
-        assert abs(cmd.heading_offset - math.radians(12)) < 1e-4
+        assert cmd.heading_offset == 0.0
 
-    def test_front_blocked_stops(self):
+    def test_front_sectors_no_longer_affect_cruise(self):
         policy = self._policy()
         obs = self._obs(free=0.95)
         fd = make_fd(free_space=0.95, free_sectors=[0.9, 0.9, 0.9, 0.0, 0.0, 0.9, 0.9, 0.9])
         cmd = policy.decide(obs, fd, [])
-        assert cmd.mode == NavigationMode.STOP
-        assert cmd.safety_override is True
+        assert cmd.mode == NavigationMode.CRUISE
