@@ -19,8 +19,9 @@ dependencies = [
     "uvicorn[standard]>=0.29.0,<1.0.0",
     "websockets>=12.0",
     "typing_extensions>=4.12.2,<5.0.0",
-    "mediapipe==0.10.18",
-    "opencv-contrib-python==4.5.4.60; platform_machine == 'aarch64'",
+    "absl-py>=1.4.0",
+    "attrs>=19.1.0",
+    "flatbuffers>=2.0",
     "setuptools<70.0.0",
 ]
 
@@ -40,6 +41,9 @@ cpu = [
     "opencv-contrib-python>=4.8.0,<5.0.0",
     "ultralytics==8.3.0",
     "supervision>=0.22.0",
+]
+gesture = [
+    "mediapipe==0.10.18",
 ]
 
 [tool.setuptools.packages.find]
