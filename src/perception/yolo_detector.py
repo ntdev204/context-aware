@@ -41,6 +41,7 @@ class DetectionResult:
     intent_confidence: float = 0.0
     dx: float = 0.0
     dy: float = 0.0
+    stale: bool = False
 
 
 @dataclass

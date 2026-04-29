@@ -30,7 +30,8 @@ class HeuristicPolicy:
 
     Decision priority (highest → lowest):
         1. Authenticated follow target locked by gesture + face auth → FOLLOW
-        2. Target temporarily lost or no authenticated target → STOP
+        2. Target temporarily lost → STOP while keeping the lock id
+        3. No authenticated target → STOP
 
     Autonomous navigation modes (CRUISE/CAUTIOUS/AVOID) are intentionally disabled.
     """
@@ -77,6 +78,10 @@ class HeuristicPolicy:
         """Enable FOLLOW mode for the given track_id (-1 to disable)."""
         self._follow_target_id = track_id
         self._target_last_seen = time.monotonic() if track_id >= 0 else 0.0
+
+    @property
+    def follow_target_id(self) -> int:
+        return self._follow_target_id
 
     def decide(
         self,
@@ -159,18 +164,14 @@ class HeuristicPolicy:
         active_ids = {p.track_id for p in persons}
 
         if self._follow_target_id >= 0 and self._follow_target_id not in active_ids:
-            lost_for = now - self._target_last_seen
-            if lost_for > self.target_lost_timeout_s:
-                logger.info(
-                    "Follow target %d lost for %.1fs — releasing.",
-                    self._follow_target_id,
-                    lost_for,
-                )
-                self._follow_target_id = -1
-            else:
-                return self._make(
-                    NavigationMode.STOP, 0.0, 0.0, confidence=0.90, safety_override=True
-                )
+            return self._make(
+                NavigationMode.STOP,
+                0.0,
+                0.0,
+                confidence=0.90,
+                follow_target_id=self._follow_target_id,
+                safety_override=True,
+            )
 
         if allow_auto_acquire and self._follow_target_id < 0 and persons:
             target = min(persons, key=lambda p: p.distance)
@@ -185,6 +186,15 @@ class HeuristicPolicy:
         target_person = next((p for p in persons if p.track_id == self._follow_target_id), None)
         if target_person is None:
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.90, safety_override=True)
+        if getattr(target_person, "stale", False):
+            return self._make(
+                NavigationMode.STOP,
+                0.0,
+                0.0,
+                confidence=0.90,
+                follow_target_id=self._follow_target_id,
+                safety_override=True,
+            )
 
         dist = target_person.distance
 

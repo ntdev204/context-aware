@@ -44,6 +44,8 @@ perception:
     max_age: 60      # giữ track lâu hơn khi người bị che khuất tạm thời
     min_hits: 1      # lock ngay frame đầu tiên, không cần chờ 3 frame
     iou_threshold: 0.3
+    hold_missing: 10 # giữ bbox thêm vài frame khi YOLO miss để tránh nhấp nháy
+    bbox_smoothing_alpha: 0.65
 
   roi:
     width: 128
@@ -81,7 +83,7 @@ navigation:
     follow_target_distance: 2.0  # giữ khoảng cách 2.0m với target (tránh vùng depth camera chỉ thấy chân)
     follow_deadband: 0.08        # ±0.08m: không điều chỉnh nếu sai số nhỏ hơn ngưỡng này
     follow_kp: 1.0               # hệ số P-controller (tăng = phản ứng nhanh hơn)
-    target_lost_timeout_s: 300.0 # giải phóng target nếu mất track > 5 phút (300 giây)
+    target_lost_timeout_s: 300.0 # legacy: lock không tự nhả khi mất track; chỉ nắm tay mới tắt follow
     follow_min_distance: 0.5     # khoảng cách tối thiểu tuyệt đối — STOP nếu người < 0.5m (cho phép lùi trong [0.5m, 1.2m])
 
   safety:

@@ -11,7 +11,7 @@ from src.perception.intent_cnn import (
     IntentCNN,
 )
 from src.perception.roi_extractor import CNN_INPUT_H, CNN_INPUT_W, ROIExtractor
-from src.perception.tracker import _FallbackTracker
+from src.perception.tracker import Tracker, _FallbackTracker
 from src.perception.yolo_detector import (
     CLASS_NAMES,
     DetectionResult,
@@ -134,6 +134,36 @@ class TestFallbackTracker:
     def test_empty_detections(self):
         tracker = _FallbackTracker(min_hits=1)
         assert tracker.update([]) == []
+
+
+class TestTrackerStabilization:
+    def test_missing_track_is_held_briefly_as_stale(self):
+        tracker = Tracker(hold_missing=2, bbox_smoothing_alpha=1.0)
+        det = make_detection(100, 100, 200, 300, tid=5)
+
+        [first] = tracker._stabilize_persons([det])
+        assert first.track_id == 5
+        assert not first.stale
+
+        [held] = tracker._stabilize_persons([])
+        assert held.track_id == 5
+        assert held.stale
+        assert held.distance == 0.0
+        assert held.distance_source == "unknown"
+
+        [held_again] = tracker._stabilize_persons([])
+        assert held_again.stale
+        assert tracker._stabilize_persons([]) == []
+
+    def test_bbox_is_smoothed_for_stable_track(self):
+        tracker = Tracker(hold_missing=0, bbox_smoothing_alpha=0.5)
+
+        tracker._stabilize_persons([make_detection(100, 100, 200, 300, tid=9)])
+        [smoothed] = tracker._stabilize_persons(
+            [make_detection(120, 120, 220, 320, tid=9)]
+        )
+
+        assert smoothed.bbox == (110, 110, 210, 310)
 
 
 # ── Ground Segmenter ─────────────────────────────────────────────────────────

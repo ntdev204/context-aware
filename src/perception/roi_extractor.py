@@ -39,6 +39,8 @@ class ROIExtractor:
         rois: list[PersonROI] = []
 
         for person in frame_det.persons:
+            if getattr(person, "stale", False):
+                continue
             roi = self._crop_person(frame, person, h, w)
             if roi is not None:
                 rois.append(roi)
