@@ -27,7 +27,9 @@ perception:
   yolo:
     model_path: models/yolo/yolo11n.engine
     use_tensorrt: true
-    confidence_threshold: 0.3
+    confidence_threshold: 0.5
+    person_confidence_threshold: 0.5
+    person_min_height_px: 48
     iou_threshold: 0.45
     input_size: [480, 640]
     classes:
@@ -78,7 +80,7 @@ navigation:
     avoid_velocity: 0.3
     follow_max_vel: 0.5          # tốc độ tối đa trong follow mode
     follow_min_vel: 0.3          # tốc độ tối thiểu khi đang di chuyển
-    # Follow is activated only by open-palm gesture + backend face auth.
+    # Follow is activated only by explicit open-palm gesture.
     auto_follow: false
     follow_target_distance: 2.0  # giữ khoảng cách 2.0m với target (tránh vùng depth camera chỉ thấy chân)
     follow_deadband: 0.08        # ±0.08m: không điều chỉnh nếu sai số nhỏ hơn ngưỡng này

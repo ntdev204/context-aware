@@ -21,7 +21,9 @@ perception:
   yolo:
     model_path: models/yolo/yolo11n.pt
     use_tensorrt: false
-    confidence_threshold: 0.3
+    confidence_threshold: 0.5
+    person_confidence_threshold: 0.5
+    person_min_height_px: 48
     iou_threshold: 0.45
     input_size: [480, 640]
     classes:

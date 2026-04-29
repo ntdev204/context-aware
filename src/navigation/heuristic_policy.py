@@ -26,10 +26,10 @@ logger = logging.getLogger(__name__)
 
 
 class HeuristicPolicy:
-    """Face-auth gated follow policy.
+    """Gesture-gated follow policy.
 
     Decision priority (highest → lowest):
-        1. Authenticated follow target locked by gesture + face auth → FOLLOW
+        1. Follow target locked by open-palm gesture → FOLLOW
         2. Target temporarily lost → STOP while keeping the lock id
         3. No authenticated target → STOP
 
@@ -61,7 +61,7 @@ class HeuristicPolicy:
         self.hard_stop_dist = hard_stop_distance
         self.slow_down_dist = slow_down_distance
         if auto_follow:
-            logger.warning("auto_follow config is ignored; follow now requires face-auth gesture lock")
+            logger.warning("auto_follow config is ignored; follow now requires explicit gesture lock")
         self.auto_follow = False
         self.follow_target_distance = follow_target_distance
         self.follow_deadband = follow_deadband
@@ -98,7 +98,7 @@ class HeuristicPolicy:
 
         intent_map = {p.track_id: p for p in intent_preds}
 
-        # Follow is only entered after the Edge API authenticates a face and locks a track_id.
+        # Follow is only entered after an explicit open-palm gesture locks a track_id.
         if self._follow_target_id >= 0:
             cmd = self._decide_follow(persons, 1.0, intent_map, allow_auto_acquire=False)
             return self._limit_forward_by_front_sector(cmd, front_free)
@@ -304,6 +304,9 @@ class HeuristicPolicy:
 
                 # Nếu lệch ít (< 10%) thì không trượt ngang để tránh xe lắc lư liên tục (deadband)
                 if abs(lateral_err) < 0.10:
+                    return 0.0
+
+                if p.distance <= self.follow_target_distance + self.follow_deadband:
                     return 0.0
 
                 # Hệ số không gian: thoáng (1.0) -> trượt nhanh hơn, hẹp (0) -> trượt cẩn thận

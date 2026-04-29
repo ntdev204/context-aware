@@ -201,6 +201,15 @@ class TestHeuristicPolicy:
         assert cmd.mode == NavigationMode.FOLLOW
         assert cmd.heading_offset == 0.0
 
+    def test_follow_too_close_disables_lateral_strafe(self):
+        policy = self._policy()
+        policy.set_follow_target(1)
+        person = make_det(0, 100, 50, 400, dist=1.9)
+        obs = self._obs(person_dist=1.9, free=0.4)
+        cmd = policy.decide(obs, make_fd(persons=[person]), [])
+        assert cmd.mode == NavigationMode.FOLLOW
+        assert cmd.velocity_y == 0.0
+
     def test_lost_follow_target_keeps_lock_id(self):
         policy = self._policy()
         policy.set_follow_target(7)
