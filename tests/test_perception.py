@@ -159,9 +159,7 @@ class TestTrackerStabilization:
         tracker = Tracker(hold_missing=0, bbox_smoothing_alpha=0.5)
 
         tracker._stabilize_persons([make_detection(100, 100, 200, 300, tid=9)])
-        [smoothed] = tracker._stabilize_persons(
-            [make_detection(120, 120, 220, 320, tid=9)]
-        )
+        [smoothed] = tracker._stabilize_persons([make_detection(120, 120, 220, 320, tid=9)])
 
         assert smoothed.bbox == (110, 110, 210, 310)
 

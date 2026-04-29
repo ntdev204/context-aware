@@ -221,6 +221,5 @@ class Tracker:
     ) -> tuple[int, int, int, int]:
         alpha = self.bbox_smoothing_alpha
         return tuple(
-            int(round(prev * (1.0 - alpha) + cur * alpha))
-            for prev, cur in zip(previous, current)
+            int(round(prev * (1.0 - alpha) + cur * alpha)) for prev, cur in zip(previous, current)
         )

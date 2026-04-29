@@ -23,9 +23,7 @@ def draw_detections(
         thickness = 1 if stale else 2
         cv2.rectangle(vis, (x1, y1), (x2, y2), color, thickness)
         cv2.putText(vis, label, (x1, max(y1 - 6, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3)
-        cv2.putText(
-            vis, label, (x1, max(y1 - 6, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1
-        )
+        cv2.putText(vis, label, (x1, max(y1 - 6, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
     for ob in obstacles:
         x1, y1, x2, y2 = ob.bbox
