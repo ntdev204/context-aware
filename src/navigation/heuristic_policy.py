@@ -17,6 +17,7 @@ import numpy as np
 
 from ..perception.intent_cnn import APPROACHING, IntentPrediction
 from ..perception.yolo_detector import DetectionResult, FrameDetections
+from .local_planner import LocalPlan, LocalPlanner
 from .nav_command import NavigationCommand, NavigationMode
 
 if TYPE_CHECKING:
@@ -51,6 +52,7 @@ class HeuristicPolicy:
         follow_kp: float = 1.0,
         target_lost_timeout_s: float = 300.0,
         follow_min_distance: float = 0.5,
+        local_planner: LocalPlanner | None = None,
     ) -> None:
         self.cruise_vel = cruise_velocity
         self.cautious_vel = cautious_velocity
@@ -73,6 +75,8 @@ class HeuristicPolicy:
         self._follow_target_id: int = -1
         self._observation: np.ndarray | None = None
         self._target_last_seen: float = 0.0
+        self._local_planner = local_planner
+        self.last_plan = LocalPlan(status="idle")
 
     def set_follow_target(self, track_id: int) -> None:
         """Enable FOLLOW mode for the given track_id (-1 to disable)."""
@@ -94,15 +98,22 @@ class HeuristicPolicy:
         self._observation = observation
 
         persons = frame_det.persons
-        front_free = 1.0
+        front_free = self._front_free_from_robot_state(robot_state)
 
         intent_map = {p.track_id: p for p in intent_preds}
 
         # Follow is only entered after an explicit open-palm gesture locks a track_id.
         if self._follow_target_id >= 0:
-            cmd = self._decide_follow(persons, 1.0, intent_map, allow_auto_acquire=False)
+            cmd = self._decide_follow(
+                frame_det,
+                front_free,
+                intent_map,
+                allow_auto_acquire=False,
+                robot_state=robot_state,
+            )
             return self._limit_forward_by_front_sector(cmd, front_free)
 
+        self.last_plan = LocalPlan(status="idle")
         return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99, safety_override=True)
 
     def _limit_forward_by_front_sector(
@@ -143,12 +154,26 @@ class HeuristicPolicy:
             front = arr[mid : mid + 1]
         return float(np.clip(np.mean(front), 0.0, 1.0))
 
+    @staticmethod
+    def _front_free_from_robot_state(robot_state: RobotState | None) -> float:
+        if robot_state is None:
+            return 1.0
+        front = float(getattr(robot_state, "lidar_front", 9.9))
+        if not np.isfinite(front) or front <= 0.0:
+            return 1.0
+        if front <= 0.35:
+            return 0.0
+        if front >= 1.2:
+            return 1.0
+        return float(np.clip((front - 0.35) / (1.2 - 0.35), 0.0, 1.0))
+
     def _decide_follow(
         self,
-        persons: list[DetectionResult],
+        frame_det: FrameDetections,
         free_ratio: float,
         intent_map: dict,
         allow_auto_acquire: bool = False,
+        robot_state: RobotState | None = None,
     ) -> NavigationCommand:
         """Context-aware person following: velocity scales with distance, free space, and intent.
 
@@ -161,9 +186,11 @@ class HeuristicPolicy:
         Reverse (too close): mirrors forward but ignores space_factor.
         """
         now = time.monotonic()
+        persons = frame_det.persons
         active_ids = {p.track_id for p in persons}
 
         if self._follow_target_id >= 0 and self._follow_target_id not in active_ids:
+            self.last_plan = LocalPlan(status="no_target", target_track_id=self._follow_target_id)
             return self._make(
                 NavigationMode.STOP,
                 0.0,
@@ -185,13 +212,31 @@ class HeuristicPolicy:
         self._target_last_seen = now
         target_person = next((p for p in persons if p.track_id == self._follow_target_id), None)
         if target_person is None:
+            self.last_plan = LocalPlan(status="no_target", target_track_id=self._follow_target_id)
             return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.90, safety_override=True)
         if getattr(target_person, "stale", False):
+            self.last_plan = LocalPlan(status="no_target", target_track_id=self._follow_target_id)
             return self._make(
                 NavigationMode.STOP,
                 0.0,
                 0.0,
                 confidence=0.90,
+                follow_target_id=self._follow_target_id,
+                safety_override=True,
+            )
+
+        self.last_plan = (
+            self._local_planner.plan(frame_det, target_person, robot_state)
+            if self._local_planner is not None
+            else LocalPlan(status="idle", target_track_id=self._follow_target_id)
+        )
+        if self.last_plan.blocked:
+            logger.info("Follow local plan blocked: %s", self.last_plan.blocked_by)
+            return self._make(
+                NavigationMode.STOP,
+                0.0,
+                0.0,
+                confidence=0.95,
                 follow_target_id=self._follow_target_id,
                 safety_override=True,
             )
@@ -231,7 +276,7 @@ class HeuristicPolicy:
             confidence=0.88,
             follow_target_id=self._follow_target_id,
         )
-        cmd.velocity_y = self._lateral_strafe_to_target(self._follow_target_id, persons, free_ratio)
+        cmd = self._apply_local_plan_velocity(cmd, target_person, persons, free_ratio, robot_state)
         return cmd.clip()
 
     def _context_velocity(self, error: float, free_ratio: float, intent_map: dict) -> float:
@@ -268,6 +313,56 @@ class HeuristicPolicy:
         vel_magnitude = float(np.clip(vel_magnitude, self.follow_min_vel, self.follow_max_vel))
 
         return vel_magnitude if going_forward else -vel_magnitude
+
+    def _apply_local_plan_velocity(
+        self,
+        cmd: NavigationCommand,
+        target_person: DetectionResult,
+        persons: list[DetectionResult],
+        free_ratio: float,
+        robot_state: RobotState | None,
+    ) -> NavigationCommand:
+        plan = self.last_plan
+        if plan.status == "replanned":
+            first = plan.first_waypoint()
+            if first is not None:
+                cmd.velocity_y = self._planned_lateral_velocity(first.y, free_ratio)
+                # If lidar says the front is tight, strafe first and avoid pushing
+                # forward into the low obstacle while the detour is being made.
+                if first.x <= 0.10:
+                    cmd.velocity_scale = 0.0
+                    return cmd
+                if cmd.velocity_scale > 0.0:
+                    cmd.velocity_scale *= min(1.0, max(0.35, first.x / 0.6))
+                return cmd
+
+        cmd.velocity_y = self._lateral_strafe_to_target(self._follow_target_id, persons, free_ratio)
+        if cmd.velocity_scale < 0.0:
+            cmd.velocity_scale = self._scale_reverse_by_rear_lidar(cmd.velocity_scale, robot_state)
+        return cmd
+
+    def _planned_lateral_velocity(self, target_y: float, free_ratio: float) -> float:
+        if abs(target_y) < 0.10:
+            return 0.0
+        space_factor = 0.7 + 0.3 * float(np.clip(free_ratio, 0.0, 1.0))
+        y_factor = float(np.clip(abs(target_y) / 1.0, 0.0, 1.0))
+        vy_range = self.follow_max_vel - self.follow_min_vel
+        vy_mag = self.follow_min_vel + vy_range * y_factor * space_factor
+        vy_mag = float(np.clip(vy_mag, self.follow_min_vel, self.follow_max_vel))
+        return vy_mag if target_y > 0.0 else -vy_mag
+
+    @staticmethod
+    def _scale_reverse_by_rear_lidar(velocity: float, robot_state: RobotState | None) -> float:
+        if robot_state is None:
+            return velocity
+        rear = float(getattr(robot_state, "lidar_rear", 9.9))
+        if not np.isfinite(rear) or rear <= 0.0:
+            return velocity
+        if rear <= 0.35:
+            return 0.0
+        if rear >= 1.0:
+            return velocity
+        return velocity * float(np.clip((rear - 0.35) / (1.0 - 0.35), 0.0, 1.0))
 
     @staticmethod
     def _make(

@@ -18,7 +18,13 @@ class InferenceMetrics:
     depth_coverage_pct: float = 0.0
     battery_percent: float = 0.0
     vx: float = 0.0
+    vy: float = 0.0
     vtheta: float = 0.0
+    lidar_front: float = 9.9
+    lidar_rear: float = 9.9
+    lidar_left: float = 9.9
+    lidar_right: float = 9.9
+    lidar_scan_count: int = 0
     mode: str = "IDLE"
     frame_id: int = 0
     updated_at: float = field(default_factory=time.monotonic)
@@ -69,7 +75,13 @@ class ServerState:
                 depth_coverage_pct=m.depth_coverage_pct,
                 battery_percent=m.battery_percent,
                 vx=m.vx,
+                vy=m.vy,
                 vtheta=m.vtheta,
+                lidar_front=m.lidar_front,
+                lidar_rear=m.lidar_rear,
+                lidar_left=m.lidar_left,
+                lidar_right=m.lidar_right,
+                lidar_scan_count=m.lidar_scan_count,
                 mode=m.mode,
                 frame_id=m.frame_id,
                 updated_at=m.updated_at,

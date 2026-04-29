@@ -51,9 +51,20 @@ class RobotState:
     vtheta: float = 0.0
     pos_x: float = 0.0
     pos_y: float = 0.0
+    pos_theta: float = 0.0
     battery_percent: float = 100.0
     nav2_status: str = "idle"
+    lidar_front: float = 9.9
+    lidar_rear: float = 9.9
+    lidar_left: float = 9.9
+    lidar_right: float = 9.9
+    lidar_scan: tuple[float, ...] = field(default_factory=tuple)
     timestamp: float = field(default_factory=time.time)
+
+    @property
+    def lidar_sectors(self) -> tuple[float, float, float, float]:
+        """Return [front, rear, left, right] lidar sector distances in metres."""
+        return (self.lidar_front, self.lidar_rear, self.lidar_left, self.lidar_right)
 
 
 class ContextBuilder:
