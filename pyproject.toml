@@ -42,9 +42,6 @@ cpu = [
     "ultralytics==8.3.0",
     "supervision>=0.22.0",
 ]
-gesture = [
-    "mediapipe==0.10.18",
-]
 
 [tool.setuptools.packages.find]
 where = ["."]

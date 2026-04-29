@@ -6,7 +6,6 @@ import numpy as np
 
 from src.navigation.context_builder import OBS_DIM, ContextBuilder, RobotState
 from src.navigation.heuristic_policy import HeuristicPolicy
-from src.navigation.local_planner import LocalPlanner
 from src.navigation.nav_command import NavigationMode
 from src.perception.intent_cnn import (
     APPROACHING,
@@ -58,14 +57,6 @@ def make_pred(track_id=1, intent=STATIONARY, conf=0.9, dx=0.0, dy=0.0):
         dy=dy,
         confidence=conf,
     )
-
-
-def make_scan360(default=9.9, blocks=None):
-    scan = [float(default)] * 360
-    for start, end, value in blocks or []:
-        for deg in range(start, end + 1):
-            scan[deg % 360] = float(value)
-    return tuple(scan)
 
 
 # ── ContextBuilder ───────────────────────────────────────────────────────────
@@ -185,59 +176,6 @@ class TestHeuristicPolicy:
         assert cmd.mode == NavigationMode.STOP
         assert cmd.velocity_scale == 0.0
 
-    def test_authenticated_follow_target_moves(self):
-        policy = self._policy()
-        policy.set_follow_target(1)
-        obs = self._obs()
-        cmd = policy.decide(obs, make_fd(persons=[make_det(dist=3.0)]), [])
-        assert cmd.mode == NavigationMode.FOLLOW
-        assert cmd.follow_target_id == 1
-        assert cmd.velocity_scale > 0.0
-
-    def test_follow_velocity_clipped_to_one(self):
-        policy = HeuristicPolicy(follow_max_vel=2.0)
-        policy.set_follow_target(1)
-        obs = self._obs()
-        cmd = policy.decide(obs, make_fd(persons=[make_det(dist=8.0)], free_space=1.0), [])
-        assert cmd.velocity_scale <= 1.0
-
-    def test_follow_keeps_zero_heading_for_mecanum_strafe(self):
-        policy = self._policy()
-        policy.set_follow_target(1)
-        person = make_det(0, 100, 50, 400)
-        obs = self._obs(person_dist=1.5, free=0.4)
-        cmd = policy.decide(obs, make_fd(persons=[person]), [])
-        assert cmd.mode == NavigationMode.FOLLOW
-        assert cmd.heading_offset == 0.0
-
-    def test_follow_too_close_disables_lateral_strafe(self):
-        policy = self._policy()
-        policy.set_follow_target(1)
-        person = make_det(0, 100, 50, 400, dist=1.9)
-        obs = self._obs(person_dist=1.9, free=0.4)
-        cmd = policy.decide(obs, make_fd(persons=[person]), [])
-        assert cmd.mode == NavigationMode.FOLLOW
-        assert cmd.velocity_y == 0.0
-
-    def test_lost_follow_target_keeps_lock_id(self):
-        policy = self._policy()
-        policy.set_follow_target(7)
-        obs = self._obs()
-        cmd = policy.decide(obs, make_fd(persons=[]), [])
-        assert cmd.mode == NavigationMode.STOP
-        assert cmd.follow_target_id == 7
-        assert policy.follow_target_id == 7
-
-    def test_stale_follow_target_stops_but_keeps_lock_id(self):
-        policy = self._policy()
-        policy.set_follow_target(7)
-        person = make_det(tid=7, dist=3.0)
-        person.stale = True
-        obs = self._obs()
-        cmd = policy.decide(obs, make_fd(persons=[person]), [])
-        assert cmd.mode == NavigationMode.STOP
-        assert cmd.follow_target_id == 7
-
     def test_persons_present_stops_without_authenticated_target(self):
         policy = self._policy()
         obs = self._obs(person_dist=2.0, free=0.3)
@@ -263,90 +201,3 @@ class TestHeuristicPolicy:
         fd = make_fd(free_space=0.95, free_sectors=[0.9, 0.9, 0.9, 0.0, 0.0, 0.9, 0.9, 0.9])
         cmd = policy.decide(obs, fd, [])
         assert cmd.mode == NavigationMode.STOP
-
-    def test_follow_replans_when_lidar_front_is_blocked(self):
-        planner = LocalPlanner(lidar_block_distance=0.65)
-        policy = HeuristicPolicy(local_planner=planner)
-        policy.set_follow_target(1)
-        person = make_det(290, 80, 350, 420, tid=1, dist=4.0)
-        state = RobotState(lidar_front=0.45, lidar_left=1.5, lidar_right=0.4)
-
-        cmd = policy.decide(self._obs(), make_fd(persons=[person]), [], state)
-
-        assert cmd.mode == NavigationMode.FOLLOW
-        assert policy.last_plan.status == "replanned"
-        assert cmd.velocity_scale == 0.0
-        assert cmd.velocity_y > 0.0
-
-    def test_follow_stops_when_local_plan_is_blocked(self):
-        planner = LocalPlanner(detour_offsets=[0.75], lidar_block_distance=0.65)
-        policy = HeuristicPolicy(local_planner=planner)
-        policy.set_follow_target(1)
-        person = make_det(290, 80, 350, 420, tid=1, dist=4.0)
-        state = RobotState(lidar_front=0.4, lidar_left=0.4, lidar_right=0.4)
-
-        cmd = policy.decide(self._obs(), make_fd(persons=[person]), [], state)
-
-        assert cmd.mode == NavigationMode.STOP
-        assert cmd.follow_target_id == 1
-        assert policy.last_plan.status == "blocked"
-
-
-class TestLocalPlanner:
-    def test_clear_path_to_follow_target(self):
-        planner = LocalPlanner()
-        person = make_det(290, 80, 350, 420, tid=1, dist=4.0)
-        plan = planner.plan(make_fd(persons=[person]), person, RobotState())
-
-        assert plan.status == "clear"
-        assert plan.waypoints
-        assert plan.target_track_id == 1
-
-    def test_camera_obstacle_on_direct_path_triggers_replan(self):
-        planner = LocalPlanner(detour_offsets=[0.8, 1.2])
-        person = make_det(290, 80, 350, 420, tid=1, dist=4.0)
-        obstacle = make_det(300, 100, 340, 300, cls="static_obstacle", tid=9, dist=1.5)
-        plan = planner.plan(
-            make_fd(persons=[person], obstacles=[obstacle]),
-            person,
-            RobotState(lidar_front=9.9, lidar_left=9.9, lidar_right=9.9),
-        )
-
-        assert plan.status == "replanned"
-        assert plan.blocked_by == "direct_path"
-
-    def test_unknown_target_depth_does_not_plan_motion(self):
-        planner = LocalPlanner()
-        person = make_det(tid=1, dist=0.0)
-        plan = planner.plan(make_fd(persons=[person]), person, RobotState())
-
-        assert plan.status == "no_depth"
-        assert plan.waypoints == []
-
-    def test_full_360_scan_front_block_replans_to_clear_side(self):
-        planner = LocalPlanner(lidar_block_distance=0.65)
-        person = make_det(290, 80, 350, 420, tid=1, dist=4.0)
-        scan = make_scan360(blocks=[(355, 359, 0.4), (0, 5, 0.4), (225, 315, 0.4)])
-
-        plan = planner.plan(
-            make_fd(persons=[person]),
-            person,
-            RobotState(lidar_scan=scan),
-        )
-
-        assert plan.status == "replanned"
-        assert plan.waypoints[0].y > 0.0
-        assert len(plan.lidar_scan) == 360
-
-    def test_full_360_scan_blocks_when_no_corridor_remains(self):
-        planner = LocalPlanner(lidar_block_distance=0.65)
-        person = make_det(290, 80, 350, 420, tid=1, dist=4.0)
-        scan = make_scan360(default=0.4)
-
-        plan = planner.plan(
-            make_fd(persons=[person]),
-            person,
-            RobotState(lidar_scan=scan),
-        )
-
-        assert plan.status == "blocked"

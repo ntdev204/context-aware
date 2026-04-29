@@ -123,7 +123,7 @@ class ZMQPublisher:
           - velocity_scale : float32 (Linear X)
           - velocity_y     : float32 (Linear Y)
           - heading_offset : float32 (Angular Z)
-          - follow_id      : int32   (track_id)
+          - reserved_id    : int32   (kept as -1 for binary compatibility)
           - timestamp      : float32 (epoch seconds, truncated ok)
           - confidence     : float32
           - safety_override: uint8
@@ -134,7 +134,7 @@ class ZMQPublisher:
             float(cmd.velocity_scale),
             float(cmd.velocity_y),
             float(cmd.heading_offset),
-            int(cmd.follow_target_id),
+            -1,
             float(cmd.timestamp),
             float(cmd.confidence),
             int(cmd.safety_override),

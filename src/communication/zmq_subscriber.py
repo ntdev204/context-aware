@@ -10,8 +10,8 @@ is notified automatically.
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import math
 import struct
 import threading
@@ -222,12 +222,7 @@ class ZMQSubscriber:
         odom = payload.get("odom", payload)
         lidar = payload.get("lidar", {})
         sectors = lidar.get("sectors", {})
-        scan = (
-            lidar.get("scan360")
-            or lidar.get("scan")
-            or payload.get("lidar_scan")
-            or []
-        )
+        scan = lidar.get("scan360") or lidar.get("scan") or payload.get("lidar_scan") or []
         scan_tuple = tuple(ZMQSubscriber._valid_distance(v) for v in scan)
 
         return RobotState(

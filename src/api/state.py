@@ -49,8 +49,6 @@ class ServerState:
         self._running = True
         self._start_time = time.monotonic()
         self._latest_detections: dict[str, Any] = {}
-        self._latest_gesture: dict[str, Any] = {}
-        self._follow_lock: dict[str, Any] = {}
 
     @property
     def uptime_seconds(self) -> float:
@@ -94,22 +92,6 @@ class ServerState:
     def get_detections(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._latest_detections)
-
-    def update_gesture(self, payload: dict[str, Any]) -> None:
-        with self._lock:
-            self._latest_gesture = payload
-
-    def get_gesture(self) -> dict[str, Any]:
-        with self._lock:
-            return dict(self._latest_gesture)
-
-    def set_follow_lock(self, payload: dict[str, Any] | None) -> None:
-        with self._lock:
-            self._follow_lock = payload or {}
-
-    def get_follow_lock(self) -> dict[str, Any]:
-        with self._lock:
-            return dict(self._follow_lock)
 
     def set_mode_override(self, mode: str | None) -> None:
         if mode is not None and mode not in VALID_MODE_OVERRIDES:

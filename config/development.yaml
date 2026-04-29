@@ -53,12 +53,6 @@ perception:
     use_tensorrt: false
     max_batch_size: 5
 
-  gesture:
-    enabled: true
-    min_confidence: 0.65
-    fist_confirm_frames: 3
-    open_palm_confirm_frames: 5
-
 context:
   temporal_stack_size: 1
   state_version: "v2-camera"
@@ -72,20 +66,7 @@ navigation:
     cruise_velocity: 1.0
     cautious_velocity: 0.6
     avoid_velocity: 0.3
-    follow_max_vel: 0.5
-    follow_min_vel: 0.3
-    follow_target_distance: 2.0
-    follow_deadband: 0.08
-
-  local_planner:
-    enabled: true
-    max_plan_distance: 5.0
-    robot_radius: 0.25
-    safety_margin: 0.20
-    corridor_width: 0.85
-    detour_offsets: [0.75, 1.10]
-    lidar_block_distance: 0.65
-    camera_obstacle_radius: 0.35
+    stop_only: true
 
   safety:
     hard_stop_distance_person: 2.0
@@ -120,8 +101,3 @@ api:
   host: "0.0.0.0"
   port: 8080
   stream_jpeg_quality: 70
-
-backend:
-  face_verify_url: "http://localhost:8000/api/faces/verify"
-  face_auth_shared_secret: ""
-  face_verify_interval_s: 2.0

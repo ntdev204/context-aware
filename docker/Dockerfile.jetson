@@ -53,8 +53,6 @@ WORKDIR /app
 COPY requirements.txt pyproject.toml ./
 RUN pip install --no-cache-dir --upgrade "typing_extensions>=4.12.2,<5.0.0"
 RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir --no-deps mediapipe==0.10.18 && \
-    python -c "import cv2; from mediapipe.python.solutions import hands; print('OpenCV', cv2.__version__, 'MediaPipe Hands OK')"
 
 # dustynv builds torchvision from source (no pip metadata).
 # Fake the metadata so Ultralytics version check passes.
