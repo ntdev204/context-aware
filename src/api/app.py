@@ -22,9 +22,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 import threading
 import time
+from collections import deque
 from collections.abc import Generator
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import uvicorn
@@ -108,6 +113,19 @@ def create_app(state: ServerState) -> FastAPI:
     @app.get("/detections", tags=["monitoring"])
     def detections() -> dict[str, Any]:
         return state.get_detections()
+
+    @app.get("/logs", tags=["monitoring"])
+    def logs(limit: int = 200) -> dict[str, Any]:
+        limit = max(1, min(limit, 500))
+        entries = _collect_log_entries(limit)
+        return {
+            "status": "ok",
+            "source": "context-aware",
+            "logs": entries[:limit],
+            "files": sorted(
+                {entry["metadata"]["path"] for entry in entries if entry.get("metadata")}
+            ),
+        }
 
     @app.get("/stream", tags=["monitoring"])
     def mjpeg_stream() -> StreamingResponse:
@@ -234,3 +252,88 @@ def start_api_server(state: ServerState, host: str = "0.0.0.0", port: int = 8080
     thread = threading.Thread(target=_run, daemon=True, name="api-server")
     thread.start()
     log.info("Edge API started: http://%s:%d  (docs: /docs)", host, port)
+
+
+def _collect_log_entries(limit: int) -> list[dict[str, Any]]:
+    per_file = max(20, min(limit, 200))
+    entries: list[dict[str, Any]] = []
+    for path in _log_file_candidates():
+        for line in _tail_lines(path, per_file):
+            line = line.strip()
+            if not line:
+                continue
+            timestamp, severity, message = _parse_log_line(line)
+            entries.append(
+                {
+                    "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
+                    "severity": severity,
+                    "source": f"context-aware:{path.name}",
+                    "message": message[:2000],
+                    "metadata": {"path": str(path)},
+                }
+            )
+    entries.sort(key=lambda item: item.get("timestamp") or "", reverse=True)
+    return entries
+
+
+def _log_file_candidates() -> list[Path]:
+    roots = []
+    env_dir = os.environ.get("CONTEXT_AWARE_LOG_DIR")
+    if env_dir:
+        roots.append(Path(env_dir))
+    roots.extend([Path("/app/logs"), Path("logs")])
+
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        root = root.expanduser()
+        candidates = []
+        if root.is_file():
+            candidates = [root]
+        elif root.is_dir():
+            candidates = [
+                *root.glob("*.log"),
+                *root.glob("*.txt"),
+                *root.glob("**/*.log"),
+            ]
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if resolved in seen or not resolved.is_file():
+                continue
+            seen.add(resolved)
+            files.append(resolved)
+
+    files.sort(key=lambda item: item.stat().st_mtime if item.exists() else 0, reverse=True)
+    return files[:20]
+
+
+def _tail_lines(path: Path, max_lines: int) -> list[str]:
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            return list(deque(handle, maxlen=max_lines))
+    except OSError:
+        return []
+
+
+def _parse_log_line(line: str) -> tuple[str | None, str, str]:
+    timestamp = None
+    message = line
+    iso_match = re.match(r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)", line)
+    if iso_match:
+        timestamp = iso_match.group(1).replace(",", ".")
+        message = line[iso_match.end() :].strip(" -")
+
+    severity = "INFO"
+    sev_match = re.search(
+        r"\b(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)\b", line, re.IGNORECASE
+    )
+    if sev_match:
+        severity = sev_match.group(1).upper()
+        if severity == "WARN":
+            severity = "WARNING"
+        if severity == "FATAL":
+            severity = "CRITICAL"
+    return timestamp, severity, message
