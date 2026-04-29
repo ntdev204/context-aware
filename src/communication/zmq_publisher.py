@@ -148,15 +148,6 @@ class ZMQPublisher:
             msg = pb.DetectionList()
             msg.timestamp = frame_det.timestamp
             msg.frame_id = frame_det.frame_id
-            msg.free_space_ratio = frame_det.free_space_ratio
-            if hasattr(msg, "free_sectors") and frame_det.free_sectors is not None:
-                msg.free_sectors.extend(float(v) for v in frame_det.free_sectors)
-            if hasattr(msg, "navigable_heading"):
-                msg.navigable_heading = float(frame_det.navigable_heading)
-            if hasattr(msg, "navigable_width"):
-                msg.navigable_width = float(frame_det.navigable_width)
-            if hasattr(msg, "freespace_processing_ms"):
-                msg.freespace_processing_ms = float(frame_det.freespace_processing_ms)
             for d in frame_det.all_detections:
                 det = msg.detections.add()
                 det.track_id = d.track_id
