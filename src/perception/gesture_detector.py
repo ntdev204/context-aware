@@ -82,6 +82,7 @@ class GestureDetector:
 
     def _detect_contour(self, frame: np.ndarray) -> GestureResult:
         h, w = frame.shape[:2]
+        frame_area = float(h * w)
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         mask1 = cv2.inRange(hsv, np.array([0, 30, 60]), np.array([25, 180, 255]))
         mask2 = cv2.inRange(hsv, np.array([160, 30, 60]), np.array([180, 180, 255]))
@@ -93,24 +94,76 @@ class GestureDetector:
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return GestureResult()
-        contour = max(contours, key=cv2.contourArea)
-        area = cv2.contourArea(contour)
-        if area < max(1800, w * h * 0.006):
-            return GestureResult()
 
-        x, y, bw, bh = cv2.boundingRect(contour)
+        best_open: tuple[float, GestureResult] | None = None
+        best_fist: tuple[float, GestureResult] | None = None
+
+        min_area = max(1400.0, frame_area * 0.004)
+        max_area = frame_area * 0.08
+
+        for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:8]:
+            area = float(cv2.contourArea(contour))
+            if area < min_area or area > max_area:
+                continue
+
+            x, y, bw, bh = cv2.boundingRect(contour)
+            if bw <= 0 or bh <= 0:
+                continue
+            aspect = bw / float(bh)
+            if aspect < 0.45 or aspect > 2.2:
+                continue
+
+            hull_points = cv2.convexHull(contour)
+            hull_area = float(cv2.contourArea(hull_points))
+            if hull_area <= 0:
+                continue
+            solidity = area / hull_area
+            extent = area / float(max(1, bw * bh))
+            fingers = self._count_contour_defects(contour)
+
+            bbox = (x, y, x + bw, y + bh)
+            area_factor = min(area / max_area, 1.0)
+
+            if fingers >= 3 and solidity < 0.88:
+                score = 0.55 + min(fingers, 5) * 0.06 + area_factor * 0.08
+                result = GestureResult("open_palm", min(score, 0.92), bbox, min(fingers + 1, 5))
+                if best_open is None or score > best_open[0]:
+                    best_open = (score, result)
+
+            if fingers <= 1 and solidity > 0.72 and extent > 0.36:
+                score = 0.50 + solidity * 0.22 + extent * 0.12 + area_factor * 0.06
+                result = GestureResult("fist", min(score, 0.86), bbox, 0)
+                if best_fist is None or score > best_fist[0]:
+                    best_fist = (score, result)
+
+        if best_open and (not best_fist or best_open[0] >= best_fist[0] + 0.05):
+            return best_open[1]
+        if best_fist:
+            return best_fist[1]
+        return GestureResult()
+
+    @staticmethod
+    def _count_contour_defects(contour: np.ndarray) -> int:
         hull = cv2.convexHull(contour, returnPoints=False)
-        fingers = 0
-        if hull is not None and len(hull) > 3:
-            defects = cv2.convexityDefects(contour, hull)
-            if defects is not None:
-                for i in range(defects.shape[0]):
-                    _, _, _, depth = defects[i, 0]
-                    if depth / 256.0 > 14:
-                        fingers += 1
+        if hull is None or len(hull) <= 3:
+            return 0
+        defects = cv2.convexityDefects(contour, hull)
+        if defects is None:
+            return 0
 
-        if fingers >= 4:
-            return GestureResult("open_palm", 0.62, (x, y, x + bw, y + bh), 5)
-        if fingers <= 1 and area > w * h * 0.012:
-            return GestureResult("fist", 0.58, (x, y, x + bw, y + bh), 0)
-        return GestureResult("none", 0.4, (x, y, x + bw, y + bh), fingers)
+        count = 0
+        for i in range(defects.shape[0]):
+            start_idx, end_idx, far_idx, depth = defects[i, 0]
+            start = contour[start_idx][0]
+            end = contour[end_idx][0]
+            far = contour[far_idx][0]
+
+            a = np.linalg.norm(end - start)
+            b = np.linalg.norm(far - start)
+            c = np.linalg.norm(end - far)
+            if b <= 1e-3 or c <= 1e-3:
+                continue
+            angle = np.degrees(np.arccos(np.clip((b * b + c * c - a * a) / (2 * b * c), -1.0, 1.0)))
+            if depth / 256.0 > 10 and angle < 95:
+                count += 1
+        return count

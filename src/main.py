@@ -295,6 +295,9 @@ class AIServer:
         self._components = _build_pipeline(cfg)
         self._perception_worker: _AsyncPerceptionWorker | None = None
         self._last_face_auth_result_at = 0.0
+        self._fist_seen_count = 0
+        self._fist_confirm_frames = int(cfg.get("perception.gesture.fist_confirm_frames", 3))
+        self._face_auth_armed = False
 
     def start(self) -> None:
         c = self._components
@@ -494,21 +497,33 @@ class AIServer:
         self._state.update_gesture(gesture_payload)
 
         if gesture.gesture == "fist":
-            policy.set_follow_target(-1)
-            self._state.set_follow_lock(None)
-            self._state.set_mode_override("STOP")
-            self._last_face_auth_result_at = time.monotonic()
+            self._fist_seen_count += 1
+            if self._fist_seen_count >= self._fist_confirm_frames:
+                policy.set_follow_target(-1)
+                self._state.set_follow_lock(None)
+                self._state.set_mode_override("STOP")
+                self._last_face_auth_result_at = time.monotonic()
+                self._face_auth_armed = False
+                logger.info("Follow released by fist gesture")
             return
+
+        if gesture.gesture != "fist":
+            self._fist_seen_count = 0
 
         if gesture.gesture == "open_palm":
             person = self._select_person_for_gesture(frame_det.persons, gesture.bbox)
             if person is not None:
-                face_auth_client.submit_open_palm(frame, person)
+                if face_auth_client.submit_open_palm(frame, person):
+                    self._face_auth_armed = True
 
         result = face_auth_client.latest_result()
         if result is None or result.created_at <= self._last_face_auth_result_at:
             return
+        if not self._face_auth_armed:
+            self._last_face_auth_result_at = result.created_at
+            return
         self._last_face_auth_result_at = result.created_at
+        self._face_auth_armed = False
 
         active_ids = {p.track_id for p in frame_det.persons}
         if result.matched and result.track_id in active_ids:
