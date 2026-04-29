@@ -297,7 +297,13 @@ class AIServer:
         self._last_face_auth_result_at = 0.0
         self._fist_seen_count = 0
         self._fist_confirm_frames = int(cfg.get("perception.gesture.fist_confirm_frames", 3))
+        self._open_palm_seen_count = 0
+        self._open_palm_confirm_frames = int(
+            cfg.get("perception.gesture.open_palm_confirm_frames", 5)
+        )
+        self._open_palm_track_id = -1
         self._face_auth_armed = False
+        self._face_auth_armed_track_id = -1
 
     def start(self) -> None:
         c = self._components
@@ -503,7 +509,10 @@ class AIServer:
                 self._state.set_follow_lock(None)
                 self._state.set_mode_override("STOP")
                 self._last_face_auth_result_at = time.monotonic()
+                self._open_palm_seen_count = 0
+                self._open_palm_track_id = -1
                 self._face_auth_armed = False
+                self._face_auth_armed_track_id = -1
                 logger.info("Follow released by fist gesture")
             return
 
@@ -512,18 +521,37 @@ class AIServer:
 
         if gesture.gesture == "open_palm":
             person = self._select_person_for_gesture(frame_det.persons, gesture.bbox)
-            if person is not None:
-                if face_auth_client.submit_open_palm(frame, person):
+            if person is not None and not self._is_gesture_likely_face_region(person, gesture.bbox):
+                if self._open_palm_track_id == person.track_id:
+                    self._open_palm_seen_count += 1
+                else:
+                    self._open_palm_track_id = person.track_id
+                    self._open_palm_seen_count = 1
+
+                if (
+                    self._open_palm_seen_count >= self._open_palm_confirm_frames
+                    and face_auth_client.submit_open_palm(frame, person)
+                ):
                     self._face_auth_armed = True
+                    self._face_auth_armed_track_id = person.track_id
+            else:
+                self._open_palm_seen_count = 0
+                self._open_palm_track_id = -1
+                if person is not None:
+                    logger.debug("Ignoring open_palm candidate in face/head region")
+        else:
+            self._open_palm_seen_count = 0
+            self._open_palm_track_id = -1
 
         result = face_auth_client.latest_result()
         if result is None or result.created_at <= self._last_face_auth_result_at:
             return
-        if not self._face_auth_armed:
+        if not self._face_auth_armed or result.track_id != self._face_auth_armed_track_id:
             self._last_face_auth_result_at = result.created_at
             return
         self._last_face_auth_result_at = result.created_at
         self._face_auth_armed = False
+        self._face_auth_armed_track_id = -1
 
         active_ids = {p.track_id for p in frame_det.persons}
         if result.matched and result.track_id in active_ids:
@@ -541,6 +569,24 @@ class AIServer:
             )
         elif not result.matched:
             logger.info("Face auth rejected track_id=%s", result.track_id)
+
+    @staticmethod
+    def _is_gesture_likely_face_region(person, gesture_bbox) -> bool:
+        """Reject open-palm candidates that look like the detected person's face/head."""
+        if gesture_bbox is None:
+            return True
+
+        px1, py1, px2, py2 = person.bbox
+        gx1, gy1, gx2, gy2 = gesture_bbox
+        pw = max(1, px2 - px1)
+        ph = max(1, py2 - py1)
+        cx = ((gx1 + gx2) * 0.5 - px1) / pw
+        cy = ((gy1 + gy2) * 0.5 - py1) / ph
+
+        # Palm candidates in the upper, centered part of the person box are usually
+        # face/head detections. A valid control palm should be clearly outside that
+        # zone, typically to one side of the body.
+        return 0.25 <= cx <= 0.75 and 0.0 <= cy <= 0.42
 
     @staticmethod
     def _select_person_for_gesture(persons, gesture_bbox) -> Any | None:

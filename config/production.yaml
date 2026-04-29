@@ -59,6 +59,7 @@ perception:
     enabled: true
     min_confidence: 0.65
     fist_confirm_frames: 3
+    open_palm_confirm_frames: 5
 
 context:
   temporal_stack_size: 1
