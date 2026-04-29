@@ -122,7 +122,9 @@ def create_app(state: ServerState) -> FastAPI:
             "status": "ok",
             "source": "context-aware",
             "logs": entries[:limit],
-            "files": sorted({entry["metadata"]["path"] for entry in entries if entry.get("metadata")}),
+            "files": sorted(
+                {entry["metadata"]["path"] for entry in entries if entry.get("metadata")}
+            ),
         }
 
     @app.get("/stream", tags=["monitoring"])
@@ -322,10 +324,12 @@ def _parse_log_line(line: str) -> tuple[str | None, str, str]:
     iso_match = re.match(r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)", line)
     if iso_match:
         timestamp = iso_match.group(1).replace(",", ".")
-        message = line[iso_match.end():].strip(" -")
+        message = line[iso_match.end() :].strip(" -")
 
     severity = "INFO"
-    sev_match = re.search(r"\b(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)\b", line, re.IGNORECASE)
+    sev_match = re.search(
+        r"\b(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)\b", line, re.IGNORECASE
+    )
     if sev_match:
         severity = sev_match.group(1).upper()
         if severity == "WARN":
