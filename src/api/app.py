@@ -12,8 +12,8 @@ Endpoints:
     WS   /ws/metrics          - live metrics push (1 Hz)
     WS   /ws/detections       - per-frame detection JSON
     POST /control/stop        - force STOP mode
-    POST /control/mode/{mode} - set mode override
-    DELETE /control/mode      - clear override, restore policy
+    POST /control/mode/{mode} - set STOP/YIELD override
+    DELETE /control/mode      - clear override, restore follow-gated policy
     GET  /config              - current runtime config snapshot
     PATCH /config             - update runtime config (fps_target, thresholds)
 """

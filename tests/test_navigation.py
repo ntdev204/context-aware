@@ -18,7 +18,7 @@ from src.perception.intent_cnn import (
 from src.perception.yolo_detector import DetectionResult, FrameDetections
 
 
-def make_det(x1=100, y1=100, x2=200, y2=400, cls="person", tid=1):
+def make_det(x1=100, y1=100, x2=200, y2=400, cls="person", tid=1, dist=3.0):
     from src.perception.yolo_detector import CLASS_NAMES
 
     return DetectionResult(
@@ -27,6 +27,7 @@ def make_det(x1=100, y1=100, x2=200, y2=400, cls="person", tid=1):
         class_name=cls,
         confidence=0.9,
         track_id=tid,
+        distance=dist,
     )
 
 
@@ -145,14 +146,14 @@ class TestHeuristicPolicy:
         obs[5] = free
         return obs
 
-    def test_empty_scene_cruise(self):
+    def test_empty_scene_stops_without_authenticated_target(self):
         policy = self._policy()
         obs = self._obs()
         cmd = policy.decide(obs, make_fd(free_space=0.95), [])
-        assert cmd.mode == NavigationMode.CRUISE
-        assert cmd.velocity_scale > 0.7
+        assert cmd.mode == NavigationMode.STOP
+        assert cmd.velocity_scale == 0.0
 
-    def test_person_close_stop(self):
+    def test_person_close_stops_without_authenticated_target(self):
         policy = self._policy()
         person = make_det(300, 50, 380, 700)
         obs = self._obs(person_dist=0.3)
@@ -160,42 +161,53 @@ class TestHeuristicPolicy:
         assert cmd.mode == NavigationMode.STOP
         assert cmd.velocity_scale == 0.0
 
-    def test_erratic_stop(self):
+    def test_erratic_does_not_enable_autonomous_motion(self):
         policy = self._policy()
         obs = self._obs(person_dist=2.0, free=0.5)
         pred = make_pred(track_id=1, intent=ERRATIC, conf=0.9)
         cmd = policy.decide(obs, make_fd(persons=[make_det()]), [pred])
         assert cmd.mode == NavigationMode.STOP
 
-    def test_crossing_avoid(self):
+    def test_crossing_does_not_enable_avoid_without_authentication(self):
         policy = self._policy()
         obs = self._obs(person_dist=1.5, free=0.5)
         pred = make_pred(track_id=1, intent=CROSSING, conf=0.8)
         cmd = policy.decide(obs, make_fd(persons=[make_det()]), [pred])
-        assert cmd.mode == NavigationMode.AVOID
-        assert 0.0 < cmd.velocity_scale <= policy.cautious_vel
+        assert cmd.mode == NavigationMode.STOP
+        assert cmd.velocity_scale == 0.0
 
-    def test_velocity_clipped_to_one(self):
-        policy = HeuristicPolicy(cruise_velocity=2.0)
+    def test_authenticated_follow_target_moves(self):
+        policy = self._policy()
+        policy.set_follow_target(1)
         obs = self._obs()
-        cmd = policy.decide(obs, make_fd(free_space=1.0), [])
+        cmd = policy.decide(obs, make_fd(persons=[make_det(dist=3.0)]), [])
+        assert cmd.mode == NavigationMode.FOLLOW
+        assert cmd.follow_target_id == 1
+        assert cmd.velocity_scale > 0.0
+
+    def test_follow_velocity_clipped_to_one(self):
+        policy = HeuristicPolicy(follow_max_vel=2.0)
+        policy.set_follow_target(1)
+        obs = self._obs()
+        cmd = policy.decide(obs, make_fd(persons=[make_det(dist=8.0)], free_space=1.0), [])
         assert cmd.velocity_scale <= 1.0
 
-    def test_heading_clipped(self):
+    def test_follow_keeps_zero_heading_for_mecanum_strafe(self):
         policy = self._policy()
+        policy.set_follow_target(1)
         person = make_det(0, 100, 50, 400)
         obs = self._obs(person_dist=1.5, free=0.4)
-        pred = make_pred(track_id=1, intent=CROSSING, conf=0.9)
-        cmd = policy.decide(obs, make_fd(persons=[person]), [pred])
-        assert -math.pi / 4 <= cmd.heading_offset <= math.pi / 4
+        cmd = policy.decide(obs, make_fd(persons=[person]), [])
+        assert cmd.mode == NavigationMode.FOLLOW
+        assert cmd.heading_offset == 0.0
 
-    def test_persons_present_cautious(self):
+    def test_persons_present_stops_without_authenticated_target(self):
         policy = self._policy()
         obs = self._obs(person_dist=2.0, free=0.3)
         cmd = policy.decide(obs, make_fd(persons=[make_det()]), [])
-        assert cmd.mode == NavigationMode.CAUTIOUS
+        assert cmd.mode == NavigationMode.STOP
 
-    def test_cruise_uses_zero_heading_without_freespace(self):
+    def test_freespace_heading_does_not_enable_cruise_without_authentication(self):
         policy = self._policy()
         obs = self._obs(free=0.95)
         fd = make_fd(
@@ -205,12 +217,12 @@ class TestHeuristicPolicy:
             width=math.radians(40),
         )
         cmd = policy.decide(obs, fd, [])
-        assert cmd.mode == NavigationMode.CRUISE
+        assert cmd.mode == NavigationMode.STOP
         assert cmd.heading_offset == 0.0
 
-    def test_front_sectors_no_longer_affect_cruise(self):
+    def test_front_sectors_do_not_enable_autonomous_motion(self):
         policy = self._policy()
         obs = self._obs(free=0.95)
         fd = make_fd(free_space=0.95, free_sectors=[0.9, 0.9, 0.9, 0.0, 0.0, 0.9, 0.9, 0.9])
         cmd = policy.decide(obs, fd, [])
-        assert cmd.mode == NavigationMode.CRUISE
+        assert cmd.mode == NavigationMode.STOP

@@ -58,6 +58,7 @@ perception:
   gesture:
     enabled: true
     min_confidence: 0.65
+    fist_confirm_frames: 3
 
 context:
   temporal_stack_size: 1

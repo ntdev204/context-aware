@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ..perception.intent_cnn import APPROACHING, CROSSING, ERRATIC, IntentPrediction
+from ..perception.intent_cnn import APPROACHING, IntentPrediction
 from ..perception.yolo_detector import DetectionResult, FrameDetections
 from .nav_command import NavigationCommand, NavigationMode
 
@@ -26,15 +26,13 @@ logger = logging.getLogger(__name__)
 
 
 class HeuristicPolicy:
-    """State-machine navigation policy driven by perception outputs.
+    """Face-auth gated follow policy.
 
     Decision priority (highest → lowest):
-        1. Safety: person/obstacle too close → STOP
-        2. ERRATIC intent detected → STOP
-        3. CROSSING / APPROACHING → AVOID or slow down
-        4. Free-space available → CRUISE
-        5. Persons but not blocking → CAUTIOUS
-        6. Follow mode active → FOLLOW
+        1. Authenticated follow target locked by gesture + face auth → FOLLOW
+        2. Target temporarily lost or no authenticated target → STOP
+
+    Autonomous navigation modes (CRUISE/CAUTIOUS/AVOID) are intentionally disabled.
     """
 
     def __init__(
@@ -87,60 +85,20 @@ class HeuristicPolicy:
         intent_preds: list[IntentPrediction],
         robot_state: RobotState | None = None,
     ) -> NavigationCommand:
-        """Return a NavigationCommand based on pure rule logic."""
+        """Return FOLLOW only for an authenticated target; otherwise hold STOP."""
         self._observation = observation
 
         persons = frame_det.persons
-        obstacles = frame_det.obstacles
         front_free = 1.0
 
         intent_map = {p.track_id: p for p in intent_preds}
-
-        nearest_person_dist = float(observation[1]) * 5.0
-        nearest_obstacle_dist = float(observation[3]) * 5.0
 
         # Follow is only entered after the Edge API authenticates a face and locks a track_id.
         if self._follow_target_id >= 0:
             cmd = self._decide_follow(persons, 1.0, intent_map, allow_auto_acquire=False)
             return self._limit_forward_by_front_sector(cmd, front_free)
 
-        if persons and nearest_person_dist < self.hard_stop_dist:
-            return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99, safety_override=True)
-        if obstacles and nearest_obstacle_dist < 0.3:
-            return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99, safety_override=True)
-
-        for pred in intent_preds:
-            if pred.intent_class == ERRATIC and pred.confidence > 0.6:
-                logger.warning("ERRATIC intent detected (track=%d)", pred.track_id)
-                return self._make(
-                    NavigationMode.STOP, 0.0, 0.0, confidence=0.95, safety_override=True
-                )
-
-        avoid_heading = 0.0
-        blocking = False
-        for person in persons:
-            pred = intent_map.get(person.track_id)
-            if pred and pred.intent_class in (CROSSING, APPROACHING) and pred.confidence > 0.5:
-                blocking = True
-                avoid_heading = self._compute_avoid_heading(person, frame_det)
-                break
-
-        if blocking:
-            slow = max(self.avoid_vel, self.avoid_vel * (nearest_person_dist / self.slow_down_dist))
-            cmd = self._make(NavigationMode.AVOID, slow, avoid_heading, confidence=0.85)
-            return self._limit_forward_by_front_sector(cmd, front_free)
-
-        if not persons:
-            return self._make(NavigationMode.CRUISE, self.cruise_vel, 0.0, confidence=0.90)
-
-        if persons:
-            vel = self.cautious_vel
-            if nearest_person_dist < self.slow_down_dist:
-                vel *= nearest_person_dist / self.slow_down_dist
-            cmd = self._make(NavigationMode.CAUTIOUS, vel, 0.0, confidence=0.75)
-            return self._limit_forward_by_front_sector(cmd, front_free)
-
-        return self._make(NavigationMode.CRUISE, self.cruise_vel, 0.0, confidence=0.70)
+        return self._make(NavigationMode.STOP, 0.0, 0.0, confidence=0.99, safety_override=True)
 
     def _limit_forward_by_front_sector(
         self,
