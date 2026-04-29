@@ -27,7 +27,7 @@ perception:
   yolo:
     model_path: models/yolo/yolo11n.engine
     use_tensorrt: true
-    confidence_threshold: 0.5
+    confidence_threshold: 0.3
     iou_threshold: 0.45
     input_size: [480, 640]
     classes:
