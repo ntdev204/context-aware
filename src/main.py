@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import threading
 import time
@@ -40,6 +41,8 @@ from .navigation import (
 from .perception import (
     Camera,
     FrameDetections,
+    FaceAuthClient,
+    GestureDetector,
     IntentCNN,
     ROIExtractor,
     Tracker,
@@ -143,6 +146,7 @@ def _build_pipeline(cfg) -> dict:
     ctx_cfg = cfg.section("context")
     safe_cfg = cfg.section("navigation.safety")
     api_cfg = cfg.section("api")
+    backend_cfg = cfg.section("backend")
 
     camera = Camera(
         device_id=cam_cfg.get("device_id", 0),
@@ -176,6 +180,23 @@ def _build_pipeline(cfg) -> dict:
         model_path=per_cfg.get("cnn_intent.model_path", None),
         use_tensorrt=per_cfg.get("cnn_intent.use_tensorrt", False),
         max_batch_size=per_cfg.get("cnn_intent.max_batch_size", 5),
+    )
+
+    gesture_detector = GestureDetector(
+        enabled=per_cfg.get("gesture.enabled", True),
+        min_confidence=per_cfg.get("gesture.min_confidence", 0.65),
+    )
+
+    face_auth_client = FaceAuthClient(
+        verify_url=os.environ.get(
+            "FACE_VERIFY_URL",
+            backend_cfg.get("face_verify_url", ""),
+        ),
+        shared_secret=os.environ.get(
+            "FACE_AUTH_SHARED_SECRET",
+            backend_cfg.get("face_auth_shared_secret", ""),
+        ),
+        min_interval_s=backend_cfg.get("face_verify_interval_s", 2.0),
     )
 
     context_builder = ContextBuilder(
@@ -249,6 +270,8 @@ def _build_pipeline(cfg) -> dict:
         tracker=tracker,
         roi_extractor=roi_extractor,
         intent_cnn=intent_cnn,
+        gesture_detector=gesture_detector,
+        face_auth_client=face_auth_client,
         context_builder=context_builder,
         heuristic_policy=heuristic_policy,
         publisher=publisher,
@@ -271,6 +294,7 @@ class AIServer:
         self._state = ServerState()
         self._components = _build_pipeline(cfg)
         self._perception_worker: _AsyncPerceptionWorker | None = None
+        self._last_face_auth_result_at = 0.0
 
     def start(self) -> None:
         c = self._components
@@ -285,6 +309,7 @@ class AIServer:
             c["roi_saver"].start()
 
         c["camera"].start()
+        c["face_auth_client"].start()
         c["publisher"].start()
         c["subscriber"].start(
             on_state=self._on_robot_state,
@@ -310,6 +335,7 @@ class AIServer:
             self._perception_worker = None
         c["subscriber"].stop()
         c["publisher"].stop()
+        c["face_auth_client"].stop()
         c["camera"].stop()
         if c["exp_buffer"] is not None:
             c["exp_buffer"].stop()
@@ -365,6 +391,7 @@ class AIServer:
                 frame_det.obstacles,
                 cmd.mode.name,
                 metrics.fps,
+                cmd.follow_target_id,
                 copy=False,
             )
             if dev_mode:
@@ -400,6 +427,8 @@ class AIServer:
         c = self._components
         yolo = c["yolo"]
         tracker = c["tracker"]
+        gesture_detector = c["gesture_detector"]
+        face_auth_client = c["face_auth_client"]
         roi_ex = c["roi_extractor"]
         cnn = c["intent_cnn"]
         ctx_bld = c["context_builder"]
@@ -409,6 +438,9 @@ class AIServer:
 
         frame_det = yolo.detect(frame, frame_id=frame_id, depth_frame=depth_frame)
         frame_det = tracker.update(frame_det, frame.shape)
+        gesture = gesture_detector.detect(frame)
+        self._handle_follow_gesture(frame, frame_det, gesture, policy, face_auth_client)
+
         rois = roi_ex.extract(frame, frame_det)
         intent_preds = cnn.predict_batch(rois) or []
 
@@ -443,6 +475,78 @@ class AIServer:
             frame_id=frame_id,
             processed_at=time.monotonic(),
         )
+
+    def _handle_follow_gesture(
+        self,
+        frame,
+        frame_det: FrameDetections,
+        gesture,
+        policy: HeuristicPolicy,
+        face_auth_client: FaceAuthClient,
+    ) -> None:
+        gesture_payload = {
+            "gesture": gesture.gesture,
+            "confidence": round(float(gesture.confidence), 3),
+            "fingers": int(gesture.fingers),
+            "bbox": list(gesture.bbox) if gesture.bbox else None,
+            "timestamp": time.time(),
+        }
+        self._state.update_gesture(gesture_payload)
+
+        if gesture.gesture == "fist":
+            policy.set_follow_target(-1)
+            self._state.set_follow_lock(None)
+            self._state.set_mode_override("STOP")
+            self._last_face_auth_result_at = time.monotonic()
+            return
+
+        if gesture.gesture == "open_palm":
+            person = self._select_person_for_gesture(frame_det.persons, gesture.bbox)
+            if person is not None:
+                face_auth_client.submit_open_palm(frame, person)
+
+        result = face_auth_client.latest_result()
+        if result is None or result.created_at <= self._last_face_auth_result_at:
+            return
+        self._last_face_auth_result_at = result.created_at
+
+        active_ids = {p.track_id for p in frame_det.persons}
+        if result.matched and result.track_id in active_ids:
+            policy.set_follow_target(result.track_id)
+            self._state.set_mode_override(None)
+            self._state.set_follow_lock(
+                {
+                    "track_id": result.track_id,
+                    "user_id": result.user_id,
+                    "username": result.username,
+                    "face_id": result.face_id,
+                    "score": round(result.score, 4),
+                    "locked_at": time.time(),
+                }
+            )
+        elif not result.matched:
+            logger.info("Face auth rejected track_id=%s", result.track_id)
+
+    @staticmethod
+    def _select_person_for_gesture(persons, gesture_bbox) -> Any | None:
+        if not persons:
+            return None
+        if gesture_bbox is None:
+            return max(persons, key=lambda p: (p.bbox[2] - p.bbox[0]) * (p.bbox[3] - p.bbox[1]))
+
+        gx1, gy1, gx2, gy2 = gesture_bbox
+
+        def score(person) -> float:
+            x1, y1, x2, y2 = person.bbox
+            ix1, iy1 = max(x1, gx1), max(y1, gy1)
+            ix2, iy2 = min(x2, gx2), min(y2, gy2)
+            inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+            hand_area = max(1, (gx2 - gx1) * (gy2 - gy1))
+            person_area = max(1, (x2 - x1) * (y2 - y1))
+            return inter / hand_area + inter / person_area
+
+        best = max(persons, key=score)
+        return best if score(best) > 0.01 else None
 
     def _annotate_intents(self, frame_det: FrameDetections, intent_preds: list[Any] | None) -> None:
         if not intent_preds:
@@ -497,9 +601,12 @@ class AIServer:
             "timestamp": frame_det.timestamp,
             "frame_id": frame_det.frame_id,
             "mode": cmd.mode.name,
+            "follow_target_id": cmd.follow_target_id,
             "inference_ms": frame_det.inference_ms,
             "persons": [_det_payload(p) for p in frame_det.persons],
             "obstacles": [_det_payload(o) for o in frame_det.obstacles],
+            "gesture": self._state.get_gesture(),
+            "follow_lock": self._state.get_follow_lock(),
         }
 
     def _update_metrics(

@@ -7,6 +7,7 @@ Replaces the raw MJPEG HTTP server with a standard FastAPI application.
 Endpoints:
     GET  /health              - liveness + status summary
     GET  /metrics             - full inference metrics
+    GET  /detections          - latest detection snapshot
     GET  /stream              - MJPEG video stream
     WS   /ws/metrics          - live metrics push (1 Hz)
     WS   /ws/detections       - per-frame detection JSON
@@ -88,9 +89,18 @@ def create_app(state: ServerState) -> FastAPI:
             "depth_coverage_pct": round(m.depth_coverage_pct, 1),
             "mode": m.mode,
             "mode_override": state.get_mode_override(),
+            "gesture": state.get_gesture(),
+            "follow_lock": state.get_follow_lock(),
             "frame_id": m.frame_id,
             "uptime_s": round(state.uptime_seconds, 1),
         }
+
+    @app.get("/detections", tags=["monitoring"])
+    def detections() -> dict[str, Any]:
+        payload = state.get_detections()
+        payload["gesture"] = state.get_gesture()
+        payload["follow_lock"] = state.get_follow_lock()
+        return payload
 
     @app.get("/stream", tags=["monitoring"])
     def mjpeg_stream() -> StreamingResponse:
@@ -127,6 +137,8 @@ def create_app(state: ServerState) -> FastAPI:
                         "obstacles": m.obstacles,
                         "mode": m.mode,
                         "mode_override": state.get_mode_override(),
+                        "gesture": state.get_gesture(),
+                        "follow_lock": state.get_follow_lock(),
                         "uptime_s": round(state.uptime_seconds, 1),
                     }
                 )

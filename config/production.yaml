@@ -55,6 +55,10 @@ perception:
     use_tensorrt: false
     max_batch_size: 5
 
+  gesture:
+    enabled: true
+    min_confidence: 0.65
+
 context:
   temporal_stack_size: 1
   state_version: "v2-camera"
@@ -70,8 +74,8 @@ navigation:
     avoid_velocity: 0.3
     follow_max_vel: 0.5          # tốc độ tối đa trong follow mode
     follow_min_vel: 0.3          # tốc độ tối thiểu khi đang di chuyển
-    # --- Bám người tự động ---
-    auto_follow: true            # true = bật chế độ bám người; false = hành vi cũ
+    # Follow is activated only by open-palm gesture + backend face auth.
+    auto_follow: false
     follow_target_distance: 2.0  # giữ khoảng cách 2.0m với target (tránh vùng depth camera chỉ thấy chân)
     follow_deadband: 0.08        # ±0.08m: không điều chỉnh nếu sai số nhỏ hơn ngưỡng này
     follow_kp: 1.0               # hệ số P-controller (tăng = phản ứng nhanh hơn)
@@ -120,3 +124,8 @@ api:
   host: "0.0.0.0"
   port: 8080
   stream_jpeg_quality: 45 # Hạ từ 70 xuống 45 để truyền qua 3G/4G mượt mà, độ trễ thấp
+
+backend:
+  face_verify_url: "http://100.93.83.87:8000/api/faces/verify"
+  face_auth_shared_secret: ""
+  face_verify_interval_s: 2.0

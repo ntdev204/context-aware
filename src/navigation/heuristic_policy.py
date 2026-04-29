@@ -61,7 +61,9 @@ class HeuristicPolicy:
         self.follow_min_vel = follow_min_vel
         self.hard_stop_dist = hard_stop_distance
         self.slow_down_dist = slow_down_distance
-        self.auto_follow = auto_follow
+        if auto_follow:
+            logger.warning("auto_follow config is ignored; follow now requires face-auth gesture lock")
+        self.auto_follow = False
         self.follow_target_distance = follow_target_distance
         self.follow_deadband = follow_deadband
         self.follow_kp = follow_kp
@@ -76,6 +78,7 @@ class HeuristicPolicy:
     def set_follow_target(self, track_id: int) -> None:
         """Enable FOLLOW mode for the given track_id (-1 to disable)."""
         self._follow_target_id = track_id
+        self._target_last_seen = time.monotonic() if track_id >= 0 else 0.0
 
     def decide(
         self,
@@ -96,12 +99,9 @@ class HeuristicPolicy:
         nearest_person_dist = float(observation[1]) * 5.0
         nearest_obstacle_dist = float(observation[3]) * 5.0
 
-        # Trong follow mode: delegate NGAY cho _decide_follow() — nó tự xử lý emergency stop
-        # tại follow_min_distance (0.5m). KHÔNG dùng hard_stop_dist (2.0m) ở đây vì sẽ
-        # chặn lệnh lùi ra xa khi người đứng trong khoảng (0.5m, 2.0m).
-        if self.auto_follow:
-            cmd = self._decide_follow(persons, 1.0, intent_map)
-            cmd.velocity_y = 0.0  # strafe tắt: chỉ dùng vx để bám thẳng
+        # Follow is only entered after the Edge API authenticates a face and locks a track_id.
+        if self._follow_target_id >= 0:
+            cmd = self._decide_follow(persons, 1.0, intent_map, allow_auto_acquire=False)
             return self._limit_forward_by_front_sector(cmd, front_free)
 
         if persons and nearest_person_dist < self.hard_stop_dist:
@@ -128,17 +128,6 @@ class HeuristicPolicy:
         if blocking:
             slow = max(self.avoid_vel, self.avoid_vel * (nearest_person_dist / self.slow_down_dist))
             cmd = self._make(NavigationMode.AVOID, slow, avoid_heading, confidence=0.85)
-            return self._limit_forward_by_front_sector(cmd, front_free)
-
-        if self._follow_target_id >= 0:
-            heading = self._heading_toward(self._follow_target_id, persons)
-            cmd = self._make(
-                NavigationMode.FOLLOW,
-                self.follow_max_vel,
-                heading,
-                confidence=0.80,
-                follow_target_id=self._follow_target_id,
-            )
             return self._limit_forward_by_front_sector(cmd, front_free)
 
         if not persons:
@@ -196,6 +185,7 @@ class HeuristicPolicy:
         persons: list[DetectionResult],
         free_ratio: float,
         intent_map: dict,
+        allow_auto_acquire: bool = False,
     ) -> NavigationCommand:
         """Context-aware person following: velocity scales with distance, free space, and intent.
 
@@ -224,7 +214,7 @@ class HeuristicPolicy:
                     NavigationMode.STOP, 0.0, 0.0, confidence=0.90, safety_override=True
                 )
 
-        if self._follow_target_id < 0 and persons:
+        if allow_auto_acquire and self._follow_target_id < 0 and persons:
             target = min(persons, key=lambda p: p.distance)
             self._follow_target_id = target.track_id
             self._target_last_seen = now
@@ -266,13 +256,15 @@ class HeuristicPolicy:
             error,
             vel,
         )
-        return self._make(
+        cmd = self._make(
             NavigationMode.FOLLOW,
             vel,
             0.0,  # heading_offset = 0: robot luôn giữ hướng, dùng vy để bám ngang
             confidence=0.88,
             follow_target_id=self._follow_target_id,
         )
+        cmd.velocity_y = self._lateral_strafe_to_target(self._follow_target_id, persons, free_ratio)
+        return cmd.clip()
 
     def _context_velocity(self, error: float, free_ratio: float, intent_map: dict) -> float:
         """Compute context-aware velocity magnitude × direction.
