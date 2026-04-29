@@ -14,8 +14,9 @@ websockets>=12.0
 typing_extensions>=4.12.2,<5.0.0
 
 # AI / Vision
-mediapipe==0.10.18
-opencv-contrib-python==4.5.4.60; platform_machine == "aarch64"
+absl-py>=1.4.0
+attrs>=19.1.0
+flatbuffers>=2.0
 supervision>=0.22.0
 numpy<2.0.0
 openni==2.3.0

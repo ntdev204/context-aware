@@ -8,12 +8,12 @@ import cv2
 logger = logging.getLogger(__name__)
 
 try:
-    import mediapipe as mp
+    from mediapipe.python.solutions import hands as mp_hands
 
     _HAS_MEDIAPIPE = True
     _MEDIAPIPE_IMPORT_ERROR: ImportError | None = None
 except ImportError as exc:
-    mp = None
+    mp_hands = None
     _HAS_MEDIAPIPE = False
     _MEDIAPIPE_IMPORT_ERROR = exc
 
@@ -38,7 +38,7 @@ class GestureDetector:
             ) from _MEDIAPIPE_IMPORT_ERROR
 
         if enabled:
-            self._hands = mp.solutions.hands.Hands(
+            self._hands = mp_hands.Hands(
                 static_image_mode=False,
                 max_num_hands=1,
                 min_detection_confidence=min_confidence,
