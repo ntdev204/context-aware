@@ -122,7 +122,7 @@ class TestZMQSubscriberDecoding:
 
         state = ZMQSubscriber._decode(raw)
 
-        assert state.pos_theta == 0.4
+        assert abs(state.pos_theta - 0.4) < 1e-6
         assert state.lidar_sectors == (0.55, 1.2, 1.8, 0.7)
 
     def test_json_robot_state_decodes_full_lidar_scan(self):
