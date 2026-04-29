@@ -51,6 +51,7 @@ RUN mkdir -p /tmp/orbbec && \
 WORKDIR /app
 
 COPY requirements.txt pyproject.toml ./
+RUN pip install --no-cache-dir --upgrade "typing_extensions>=4.12.2,<5.0.0"
 RUN pip install --no-cache-dir -r requirements.txt
 
 # dustynv builds torchvision from source (no pip metadata).
