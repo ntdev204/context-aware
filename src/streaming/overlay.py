@@ -10,17 +10,20 @@ def draw_detections(
     obstacles: list,
     mode_name: str,
     fps: float,
+    follow_target_id: int = -1,
     copy: bool = True,
 ) -> np.ndarray:
     vis = frame.copy() if copy else frame
 
     for p in persons:
         x1, y1, x2, y2 = p.bbox
-        label = f"ID:{p.track_id} {p.intent_name} {p.intent_confidence:.0%}"
-        cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 200, 0), 2)
+        locked = p.track_id == follow_target_id
+        label = f"{'LOCK ' if locked else ''}ID:{p.track_id} {p.intent_name} {p.intent_confidence:.0%}"
+        color = (0, 255, 255) if locked else (0, 200, 0)
+        cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
         cv2.putText(vis, label, (x1, max(y1 - 6, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3)
         cv2.putText(
-            vis, label, (x1, max(y1 - 6, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1
+            vis, label, (x1, max(y1 - 6, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1
         )
 
     for ob in obstacles:
