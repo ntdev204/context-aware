@@ -11,6 +11,8 @@ is notified automatically.
 from __future__ import annotations
 
 import logging
+import json
+import math
 import struct
 import threading
 import time
@@ -151,6 +153,9 @@ class ZMQSubscriber:
 
     @staticmethod
     def _decode(data: bytes) -> RobotState:
+        if data[:1] == b"{":
+            return ZMQSubscriber._decode_json(data)
+
         if pb is not None:
             try:
                 msg = pb.RobotState()
@@ -161,8 +166,14 @@ class ZMQSubscriber:
                     vtheta=msg.vtheta,
                     pos_x=msg.pos_x,
                     pos_y=msg.pos_y,
+                    pos_theta=getattr(msg, "pos_theta", 0.0),
                     battery_percent=msg.battery_percent,
                     nav2_status=msg.nav2_status,
+                    lidar_front=getattr(msg, "lidar_front", 9.9),
+                    lidar_rear=getattr(msg, "lidar_rear", 9.9),
+                    lidar_left=getattr(msg, "lidar_left", 9.9),
+                    lidar_right=getattr(msg, "lidar_right", 9.9),
+                    lidar_scan=tuple(getattr(msg, "lidar_scan", ()) or ()),
                     timestamp=msg.timestamp,
                 )
             except Exception:
@@ -179,7 +190,12 @@ class ZMQSubscriber:
                 vtheta=vtheta,
                 pos_x=px,
                 pos_y=py,
+                pos_theta=ptheta,
                 battery_percent=batt,
+                lidar_front=_df,
+                lidar_rear=_dr,
+                lidar_left=_dl,
+                lidar_right=_dri,
                 nav2_status="idle",
                 timestamp=ts,
             )
@@ -193,8 +209,58 @@ class ZMQSubscriber:
                 vtheta=vtheta,
                 pos_x=px,
                 pos_y=py,
+                pos_theta=ptheta,
                 battery_percent=batt,
                 nav2_status="idle",
                 timestamp=ts,
             )
         raise ValueError(f"Unknown state payload length: {len(data)}")
+
+    @staticmethod
+    def _decode_json(data: bytes) -> RobotState:
+        payload = json.loads(data.decode("utf-8"))
+        odom = payload.get("odom", payload)
+        lidar = payload.get("lidar", {})
+        sectors = lidar.get("sectors", {})
+        scan = (
+            lidar.get("scan360")
+            or lidar.get("scan")
+            or payload.get("lidar_scan")
+            or []
+        )
+        scan_tuple = tuple(ZMQSubscriber._valid_distance(v) for v in scan)
+
+        return RobotState(
+            vx=float(odom.get("vx", odom.get("v_x", 0.0))),
+            vy=float(odom.get("vy", odom.get("v_y", 0.0))),
+            vtheta=float(odom.get("vtheta", odom.get("v_z", 0.0))),
+            pos_x=float(odom.get("pos_x", odom.get("x", 0.0))),
+            pos_y=float(odom.get("pos_y", odom.get("y", 0.0))),
+            pos_theta=float(odom.get("pos_theta", odom.get("yaw", 0.0))),
+            battery_percent=float(payload.get("battery_percent", payload.get("battery", 100.0))),
+            nav2_status=str(payload.get("nav2_status", "idle")),
+            lidar_front=ZMQSubscriber._valid_distance(
+                sectors.get("front", payload.get("lidar_front", 9.9))
+            ),
+            lidar_rear=ZMQSubscriber._valid_distance(
+                sectors.get("rear", payload.get("lidar_rear", 9.9))
+            ),
+            lidar_left=ZMQSubscriber._valid_distance(
+                sectors.get("left", payload.get("lidar_left", 9.9))
+            ),
+            lidar_right=ZMQSubscriber._valid_distance(
+                sectors.get("right", payload.get("lidar_right", 9.9))
+            ),
+            lidar_scan=scan_tuple,
+            timestamp=float(payload.get("timestamp", time.time())),
+        )
+
+    @staticmethod
+    def _valid_distance(value) -> float:
+        try:
+            dist = float(value)
+        except (TypeError, ValueError):
+            return 9.9
+        if not math.isfinite(dist) or dist <= 0.0:
+            return 9.9
+        return min(dist, 9.9)

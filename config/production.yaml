@@ -88,6 +88,16 @@ navigation:
     target_lost_timeout_s: 300.0 # legacy: lock không tự nhả khi mất track; chỉ nắm tay mới tắt follow
     follow_min_distance: 0.5     # khoảng cách tối thiểu tuyệt đối — STOP nếu người < 0.5m (cho phép lùi trong [0.5m, 1.2m])
 
+  local_planner:
+    enabled: true
+    max_plan_distance: 5.0       # short-horizon follow plan in robot frame
+    robot_radius: 0.25
+    safety_margin: 0.20
+    corridor_width: 0.85
+    detour_offsets: [0.75, 1.10]
+    lidar_block_distance: 0.65   # below this, strafe first before moving forward
+    camera_obstacle_radius: 0.35
+
   safety:
     hard_stop_distance_person: 0.4   # Camera-based fallback only (Pi Lidar handles 0.5m+)
     hard_stop_distance_obstacle: 0.2

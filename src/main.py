@@ -34,6 +34,7 @@ from .experience.roi_saver import ROISaver
 from .navigation import (
     ContextBuilder,
     HeuristicPolicy,
+    LocalPlanner,
     NavigationCommand,
     NavigationMode,
     RobotState,
@@ -196,6 +197,23 @@ def _build_pipeline(cfg) -> dict:
     )
 
     heuristic_cfg = nav_cfg.get("heuristic", {})
+    planner_cfg = nav_cfg.get("local_planner", {})
+    local_planner = (
+        LocalPlanner(
+            enabled=planner_cfg.get("enabled", True),
+            follow_target_distance=heuristic_cfg.get("follow_target_distance", 2.0),
+            max_plan_distance=planner_cfg.get("max_plan_distance", 5.0),
+            robot_radius=planner_cfg.get("robot_radius", 0.25),
+            safety_margin=planner_cfg.get("safety_margin", 0.20),
+            corridor_width=planner_cfg.get("corridor_width", 0.85),
+            detour_offsets=planner_cfg.get("detour_offsets", [0.75, 1.10]),
+            lidar_block_distance=planner_cfg.get("lidar_block_distance", 0.65),
+            camera_obstacle_radius=planner_cfg.get("camera_obstacle_radius", 0.35),
+        )
+        if planner_cfg.get("enabled", True)
+        else None
+    )
+
     heuristic_policy = HeuristicPolicy(
         cruise_velocity=heuristic_cfg.get("cruise_velocity", 1.0),
         cautious_velocity=heuristic_cfg.get("cautious_velocity", 0.6),
@@ -210,6 +228,7 @@ def _build_pipeline(cfg) -> dict:
         follow_kp=heuristic_cfg.get("follow_kp", 1.0),
         target_lost_timeout_s=heuristic_cfg.get("target_lost_timeout_s", 300.0),
         follow_min_distance=heuristic_cfg.get("follow_min_distance", 0.5),
+        local_planner=local_planner,
     )
 
     publisher = ZMQPublisher(
@@ -385,6 +404,7 @@ class AIServer:
                 cmd.mode.name,
                 metrics.fps,
                 cmd.follow_target_id,
+                getattr(c["heuristic_policy"], "last_plan", None),
                 copy=False,
             )
             if dev_mode:
@@ -629,7 +649,12 @@ class AIServer:
             "obstacles": [_det_payload(o) for o in frame_det.obstacles],
             "gesture": self._state.get_gesture(),
             "follow_lock": self._state.get_follow_lock(),
+            "local_plan": self._local_plan_payload(),
         }
+
+    def _local_plan_payload(self) -> dict[str, Any] | None:
+        plan = getattr(self._components["heuristic_policy"], "last_plan", None)
+        return plan.to_payload() if plan is not None else None
 
     def _update_metrics(
         self,
@@ -683,7 +708,15 @@ class AIServer:
 
         # Đẩy dữ liệu lên API để Website hiển thị Online và cập nhật Pin
         self._state.update_metrics(
-            battery_percent=state.battery_percent, vx=state.vx, vtheta=state.vtheta
+            battery_percent=state.battery_percent,
+            vx=state.vx,
+            vy=state.vy,
+            vtheta=state.vtheta,
+            lidar_front=state.lidar_front,
+            lidar_rear=state.lidar_rear,
+            lidar_left=state.lidar_left,
+            lidar_right=state.lidar_right,
+            lidar_scan_count=len(state.lidar_scan),
         )
 
     def _on_watchdog_timeout(self) -> None:

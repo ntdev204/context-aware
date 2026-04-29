@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import struct
 import time
+import json
 
 import pytest
 
@@ -98,6 +99,65 @@ class TestZMQPublisherEncoding:
             assert mode == int(NavigationMode.CRUISE)
             assert abs(v - 0.7) < 1e-5
             assert abs(h - (-0.1)) < 1e-5
+
+
+class TestZMQSubscriberDecoding:
+    def test_struct_robot_state_decodes_lidar_sectors(self):
+        pytest.importorskip("zmq")
+        from src.communication.zmq_subscriber import ZMQSubscriber
+
+        raw = struct.pack(
+            "!11fd",
+            0.1,
+            0.2,
+            0.3,
+            1.0,
+            2.0,
+            0.4,
+            88.0,
+            0.55,
+            1.2,
+            1.8,
+            0.7,
+            123.0,
+        )
+
+        state = ZMQSubscriber._decode(raw)
+
+        assert state.pos_theta == 0.4
+        assert state.lidar_sectors == (0.55, 1.2, 1.8, 0.7)
+
+    def test_json_robot_state_decodes_full_lidar_scan(self):
+        pytest.importorskip("zmq")
+        from src.communication.zmq_subscriber import ZMQSubscriber
+
+        scan = [9.9] * 360
+        scan[0] = 0.42
+        scan[90] = 1.7
+        raw = json.dumps(
+            {
+                "odom": {
+                    "vx": 0.1,
+                    "vy": 0.2,
+                    "vtheta": 0.3,
+                    "pos_x": 1.0,
+                    "pos_y": 2.0,
+                    "pos_theta": 0.4,
+                },
+                "battery_percent": 87.0,
+                "lidar": {
+                    "sectors": {"front": 0.42, "rear": 1.2, "left": 1.7, "right": 0.8},
+                    "scan360": scan,
+                },
+                "timestamp": 123.0,
+            }
+        ).encode("utf-8")
+
+        state = ZMQSubscriber._decode(raw)
+
+        assert state.lidar_front == 0.42
+        assert len(state.lidar_scan) == 360
+        assert state.lidar_scan[90] == 1.7
 
 
 # ── ZMQ Loopback (integration, requires ZMQ) ─────────────────────────────────
