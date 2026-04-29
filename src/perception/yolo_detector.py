@@ -73,6 +73,8 @@ class YOLODetector:
         model_path: str,
         use_tensorrt: bool = False,
         confidence_threshold: float = 0.5,
+        person_confidence_threshold: float | None = None,
+        person_min_height_px: int = 48,
         iou_threshold: float = 0.45,
         input_size: int | tuple[int, int] = (480, 640),  # (H, W)
         device: str = "cuda",
@@ -80,6 +82,12 @@ class YOLODetector:
         self.model_path = model_path
         self.use_tensorrt = use_tensorrt
         self.conf = confidence_threshold
+        self.person_conf = (
+            confidence_threshold
+            if person_confidence_threshold is None
+            else person_confidence_threshold
+        )
+        self.person_min_height_px = int(person_min_height_px)
         self.iou = iou_threshold
         self.input_size = input_size
         self.device = device
@@ -173,6 +181,9 @@ class YOLODetector:
             conf = float(box.conf[0])
             x1, y1, x2, y2 = (int(v) for v in box.xyxy[0])
 
+            if class_name == "person" and not self._passes_person_filter(conf, x1, y1, x2, y2):
+                continue
+
             det = DetectionResult(
                 bbox=(x1, y1, x2, y2),
                 class_id=cls_id,
@@ -219,6 +230,21 @@ class YOLODetector:
             return "static_obstacle"
 
         return "ignore"
+
+    def _passes_person_filter(
+        self,
+        confidence: float,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+    ) -> bool:
+        if confidence < self.person_conf:
+            return False
+        bbox_height = max(0, y2 - y1)
+        if bbox_height < self.person_min_height_px:
+            return False
+        return True
 
     @staticmethod
     def _estimate_distance(

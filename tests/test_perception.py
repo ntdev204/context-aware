@@ -350,6 +350,29 @@ class TestGroundSegmenter:
 
 
 class TestYOLODepthRange:
+    def test_person_filter_rejects_low_confidence_false_positive(self):
+        detector = YOLODetector(
+            model_path="dummy.pt",
+            confidence_threshold=0.3,
+            person_confidence_threshold=0.45,
+            person_min_height_px=48,
+            device="cpu",
+        )
+
+        assert not detector._passes_person_filter(0.31, 10, 10, 60, 120)
+        assert detector._passes_person_filter(0.6, 10, 10, 60, 120)
+
+    def test_person_filter_rejects_too_small_bbox(self):
+        detector = YOLODetector(
+            model_path="dummy.pt",
+            confidence_threshold=0.3,
+            person_confidence_threshold=0.45,
+            person_min_height_px=48,
+            device="cpu",
+        )
+
+        assert not detector._passes_person_filter(0.9, 10, 10, 40, 50)
+
     def test_depth_distance_uses_two_to_eight_metre_range(self):
         depth = np.full((40, 40), 3000, dtype=np.uint16)
 

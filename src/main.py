@@ -41,7 +41,6 @@ from .navigation import (
 from .perception import (
     Camera,
     FrameDetections,
-    FaceAuthClient,
     GestureDetector,
     IntentCNN,
     ROIExtractor,
@@ -146,7 +145,6 @@ def _build_pipeline(cfg) -> dict:
     ctx_cfg = cfg.section("context")
     safe_cfg = cfg.section("navigation.safety")
     api_cfg = cfg.section("api")
-    backend_cfg = cfg.section("backend")
 
     camera = Camera(
         device_id=cam_cfg.get("device_id", 0),
@@ -160,6 +158,8 @@ def _build_pipeline(cfg) -> dict:
         model_path=per_cfg.get("yolo.model_path", "models/yolo/yolo11s.pt"),
         use_tensorrt=per_cfg.get("yolo.use_tensorrt", False),
         confidence_threshold=per_cfg.get("yolo.confidence_threshold", 0.5),
+        person_confidence_threshold=per_cfg.get("yolo.person_confidence_threshold", None),
+        person_min_height_px=per_cfg.get("yolo.person_min_height_px", 48),
         iou_threshold=per_cfg.get("yolo.iou_threshold", 0.45),
         input_size=per_cfg.get("yolo.input_size", 640),
     )
@@ -187,18 +187,6 @@ def _build_pipeline(cfg) -> dict:
     gesture_detector = GestureDetector(
         enabled=per_cfg.get("gesture.enabled", True),
         min_confidence=per_cfg.get("gesture.min_confidence", 0.65),
-    )
-
-    face_auth_client = FaceAuthClient(
-        verify_url=os.environ.get(
-            "FACE_VERIFY_URL",
-            backend_cfg.get("face_verify_url", ""),
-        ),
-        shared_secret=os.environ.get(
-            "FACE_AUTH_SHARED_SECRET",
-            backend_cfg.get("face_auth_shared_secret", ""),
-        ),
-        min_interval_s=backend_cfg.get("face_verify_interval_s", 2.0),
     )
 
     context_builder = ContextBuilder(
@@ -273,7 +261,6 @@ def _build_pipeline(cfg) -> dict:
         roi_extractor=roi_extractor,
         intent_cnn=intent_cnn,
         gesture_detector=gesture_detector,
-        face_auth_client=face_auth_client,
         context_builder=context_builder,
         heuristic_policy=heuristic_policy,
         publisher=publisher,
@@ -296,7 +283,6 @@ class AIServer:
         self._state = ServerState()
         self._components = _build_pipeline(cfg)
         self._perception_worker: _AsyncPerceptionWorker | None = None
-        self._last_face_auth_result_at = 0.0
         self._fist_seen_count = 0
         self._fist_confirm_frames = int(cfg.get("perception.gesture.fist_confirm_frames", 3))
         self._open_palm_seen_count = 0
@@ -304,8 +290,6 @@ class AIServer:
             cfg.get("perception.gesture.open_palm_confirm_frames", 5)
         )
         self._open_palm_track_id = -1
-        self._face_auth_armed = False
-        self._face_auth_armed_track_id = -1
 
     def start(self) -> None:
         c = self._components
@@ -320,7 +304,6 @@ class AIServer:
             c["roi_saver"].start()
 
         c["camera"].start()
-        c["face_auth_client"].start()
         c["publisher"].start()
         c["subscriber"].start(
             on_state=self._on_robot_state,
@@ -346,7 +329,6 @@ class AIServer:
             self._perception_worker = None
         c["subscriber"].stop()
         c["publisher"].stop()
-        c["face_auth_client"].stop()
         c["camera"].stop()
         if c["exp_buffer"] is not None:
             c["exp_buffer"].stop()
@@ -439,7 +421,6 @@ class AIServer:
         yolo = c["yolo"]
         tracker = c["tracker"]
         gesture_detector = c["gesture_detector"]
-        face_auth_client = c["face_auth_client"]
         roi_ex = c["roi_extractor"]
         cnn = c["intent_cnn"]
         ctx_bld = c["context_builder"]
@@ -450,7 +431,7 @@ class AIServer:
         frame_det = yolo.detect(frame, frame_id=frame_id, depth_frame=depth_frame)
         frame_det = tracker.update(frame_det, frame.shape)
         gesture = gesture_detector.detect(frame)
-        self._handle_follow_gesture(frame, frame_det, gesture, policy, face_auth_client)
+        self._handle_follow_gesture(frame, frame_det, gesture, policy)
 
         rois = roi_ex.extract(frame, frame_det)
         intent_preds = cnn.predict_batch(rois) or []
@@ -493,7 +474,6 @@ class AIServer:
         frame_det: FrameDetections,
         gesture,
         policy: HeuristicPolicy,
-        face_auth_client: FaceAuthClient,
     ) -> None:
         gesture_payload = {
             "gesture": gesture.gesture,
@@ -510,11 +490,8 @@ class AIServer:
                 policy.set_follow_target(-1)
                 self._state.set_follow_lock(None)
                 self._state.set_mode_override("STOP")
-                self._last_face_auth_result_at = time.monotonic()
                 self._open_palm_seen_count = 0
                 self._open_palm_track_id = -1
-                self._face_auth_armed = False
-                self._face_auth_armed_track_id = -1
                 logger.info("Follow released by fist gesture")
             return
 
@@ -530,12 +507,19 @@ class AIServer:
                     self._open_palm_track_id = person.track_id
                     self._open_palm_seen_count = 1
 
-                if (
-                    self._open_palm_seen_count >= self._open_palm_confirm_frames
-                    and face_auth_client.submit_open_palm(frame, person)
-                ):
-                    self._face_auth_armed = True
-                    self._face_auth_armed_track_id = person.track_id
+                if self._open_palm_seen_count >= self._open_palm_confirm_frames:
+                    policy.set_follow_target(person.track_id)
+                    self._state.set_mode_override(None)
+                    self._state.set_follow_lock(
+                        {
+                            "track_id": person.track_id,
+                            "method": "open_palm",
+                            "locked_at": time.time(),
+                        }
+                    )
+                    self._open_palm_seen_count = 0
+                    self._open_palm_track_id = -1
+                    logger.info("Follow locked by open_palm gesture: track_id=%d", person.track_id)
             else:
                 self._open_palm_seen_count = 0
                 self._open_palm_track_id = -1
@@ -544,33 +528,6 @@ class AIServer:
         else:
             self._open_palm_seen_count = 0
             self._open_palm_track_id = -1
-
-        result = face_auth_client.latest_result()
-        if result is None or result.created_at <= self._last_face_auth_result_at:
-            return
-        if not self._face_auth_armed or result.track_id != self._face_auth_armed_track_id:
-            self._last_face_auth_result_at = result.created_at
-            return
-        self._last_face_auth_result_at = result.created_at
-        self._face_auth_armed = False
-        self._face_auth_armed_track_id = -1
-
-        active_ids = {p.track_id for p in frame_det.persons}
-        if result.matched and result.track_id in active_ids:
-            policy.set_follow_target(result.track_id)
-            self._state.set_mode_override(None)
-            self._state.set_follow_lock(
-                {
-                    "track_id": result.track_id,
-                    "user_id": result.user_id,
-                    "username": result.username,
-                    "face_id": result.face_id,
-                    "score": round(result.score, 4),
-                    "locked_at": time.time(),
-                }
-            )
-        elif not result.matched:
-            logger.info("Face auth rejected track_id=%s", result.track_id)
 
     @staticmethod
     def _is_gesture_likely_face_region(person, gesture_bbox) -> bool:
