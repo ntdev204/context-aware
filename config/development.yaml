@@ -38,6 +38,8 @@ perception:
     max_age: 30
     min_hits: 3
     iou_threshold: 0.3
+    hold_missing: 10
+    bbox_smoothing_alpha: 0.65
 
   roi:
     width: 128

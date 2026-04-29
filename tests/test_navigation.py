@@ -201,6 +201,25 @@ class TestHeuristicPolicy:
         assert cmd.mode == NavigationMode.FOLLOW
         assert cmd.heading_offset == 0.0
 
+    def test_lost_follow_target_keeps_lock_id(self):
+        policy = self._policy()
+        policy.set_follow_target(7)
+        obs = self._obs()
+        cmd = policy.decide(obs, make_fd(persons=[]), [])
+        assert cmd.mode == NavigationMode.STOP
+        assert cmd.follow_target_id == 7
+        assert policy.follow_target_id == 7
+
+    def test_stale_follow_target_stops_but_keeps_lock_id(self):
+        policy = self._policy()
+        policy.set_follow_target(7)
+        person = make_det(tid=7, dist=3.0)
+        person.stale = True
+        obs = self._obs()
+        cmd = policy.decide(obs, make_fd(persons=[person]), [])
+        assert cmd.mode == NavigationMode.STOP
+        assert cmd.follow_target_id == 7
+
     def test_persons_present_stops_without_authenticated_target(self):
         policy = self._policy()
         obs = self._obs(person_dist=2.0, free=0.3)

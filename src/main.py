@@ -168,6 +168,8 @@ def _build_pipeline(cfg) -> dict:
         max_age=per_cfg.get("tracker.max_age", 30),
         min_hits=per_cfg.get("tracker.min_hits", 3),
         iou_threshold=per_cfg.get("tracker.iou_threshold", 0.3),
+        hold_missing=per_cfg.get("tracker.hold_missing", 10),
+        bbox_smoothing_alpha=per_cfg.get("tracker.bbox_smoothing_alpha", 0.65),
     )
 
     roi_extractor = ROIExtractor(
@@ -590,6 +592,7 @@ class AIServer:
 
     @staticmethod
     def _select_person_for_gesture(persons, gesture_bbox) -> Any | None:
+        persons = [p for p in persons if not getattr(p, "stale", False)]
         if not persons:
             return None
         if gesture_bbox is None:
@@ -654,6 +657,7 @@ class AIServer:
                 "confidence": det.confidence,
                 "distance": det.distance,
                 "distance_source": det.distance_source,
+                "stale": bool(getattr(det, "stale", False)),
                 "intent_name": det.intent_name,
                 "intent_confidence": det.intent_confidence,
             }
