@@ -46,8 +46,8 @@ perception:
     max_age: 60      # giữ track lâu hơn khi người bị che khuất tạm thời
     min_hits: 1      # lock ngay frame đầu tiên, không cần chờ 3 frame
     iou_threshold: 0.3
-    hold_missing: 10 # giữ bbox thêm vài frame khi YOLO miss để tránh nhấp nháy
-    bbox_smoothing_alpha: 0.65
+    hold_missing: 12 # giữ bbox thêm vài frame khi YOLO miss để tránh nhấp nháy
+    bbox_smoothing_alpha: 0.5
 
   roi:
     width: 128
@@ -96,6 +96,7 @@ communication:
     rcvhwm: 2
 
 experience:
+  collection_enabled: true
   # ── HDF5 mode ── Set to true to re-enable RL experience logging.
   hdf5_enabled: false
   buffer_size: 10000
@@ -109,8 +110,7 @@ experience:
   roi_batch_size: 5000 # images per archive before sending
   roi_jpeg_quality: 90 # higher = better features for CNN
 
-  # rsync destination — Server Docker container via LAN.
-  roi_server_target: "-e 'ssh -p 2222' root@25.12.4.105:/data/roi_incoming/"
+  # Dataset transfer is handled by the Edge API and rai_website download flow.
 
 api:
   host: "0.0.0.0"

@@ -40,8 +40,8 @@ perception:
     max_age: 30
     min_hits: 3
     iou_threshold: 0.3
-    hold_missing: 10
-    bbox_smoothing_alpha: 0.65
+    hold_missing: 12
+    bbox_smoothing_alpha: 0.5
 
   roi:
     width: 128
@@ -91,11 +91,15 @@ communication:
 
 experience:
   enabled: true
+  collection_enabled: true
+  hdf5_enabled: true
   buffer_size: 10000
   jpeg_quality: 85
   write_dir: logs/experience
   write_format: hdf5
   async_write: true
+  roi_save_dir: logs/roi_dataset
+  roi_jpeg_quality: 90
 
 api:
   host: "0.0.0.0"

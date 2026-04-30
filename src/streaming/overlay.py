@@ -17,11 +17,11 @@ def draw_detections(
     for p in persons:
         x1, y1, x2, y2 = p.bbox
         stale = getattr(p, "stale", False)
-        state = "LOST " if stale else ""
-        label = f"{state}ID:{p.track_id} {p.intent_name} {p.intent_confidence:.0%}"
+        if stale:
+            continue
+        label = f"ID:{p.track_id} {p.intent_name} {p.intent_confidence:.0%}"
         color = (0, 200, 0)
-        thickness = 1 if stale else 2
-        cv2.rectangle(vis, (x1, y1), (x2, y2), color, thickness)
+        cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
         cv2.putText(vis, label, (x1, max(y1 - 6, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 3)
         cv2.putText(vis, label, (x1, max(y1 - 6, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
