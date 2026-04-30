@@ -30,6 +30,7 @@ class ExperienceBuffer:
         self._running = False
         self._pending: deque = deque()  # staging queue for writer thread
         self._write_lock = threading.Lock()
+        self._io_lock = threading.Lock()
 
         self._written_count = 0
         self._dropped_count = 0
@@ -48,6 +49,8 @@ class ExperienceBuffer:
         self._running = False
         if self._write_thread:
             self._write_thread.join(timeout=5.0)
+        if not self.async_write:
+            self.flush()
         logger.info("ExperienceBuffer stopped (written=%d)", self._written_count)
 
     def push(self, frame) -> bool:
@@ -63,6 +66,18 @@ class ExperienceBuffer:
             self._pending.append(frame)
 
         return not was_full
+
+    def flush(self) -> None:
+        while True:
+            batch = []
+            with self._write_lock:
+                while self._pending and len(batch) < 64:
+                    batch.append(self._pending.popleft())
+            if not batch:
+                with self._io_lock:
+                    pass
+                return
+            self._write_batch(batch)
 
     def pop_batch(self, n: int = 32):
         with self._lock:
@@ -84,15 +99,19 @@ class ExperienceBuffer:
 
             if batch:
                 try:
-                    if self.write_format == "hdf5":
-                        self._write_hdf5(batch)
-                    else:
-                        self._write_directory(batch)
-                    self._written_count += len(batch)
+                    self._write_batch(batch)
                 except Exception as exc:
                     logger.error("Experience write error: %s", exc)
             else:
                 time.sleep(0.1)
+
+    def _write_batch(self, batch: list) -> None:
+        with self._io_lock:
+            if self.write_format == "hdf5":
+                self._write_hdf5(batch)
+            else:
+                self._write_directory(batch)
+            self._written_count += len(batch)
 
     def _write_hdf5(self, batch: list) -> None:
         import h5py

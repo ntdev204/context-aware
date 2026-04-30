@@ -72,7 +72,7 @@ services:
               capabilities: [gpu]
 
   jetson-sync:
-    profiles: ["jetson-prod"]
+    profiles: ["jetson-sync"]
     image: context-aware:jetson-prod   # reuse existing image — no extra build
     network_mode: host
     depends_on:

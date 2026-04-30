@@ -119,7 +119,7 @@ jetson-build-prod:
 	$(JETSON_PROD) build jetson-prod
 
 jetson-up:
-	$(JETSON_PROD) up -d
+	$(COMPOSE) up -d jetson-prod
 
 jetson-logs:
 	$(JETSON_PROD) logs -f jetson-prod

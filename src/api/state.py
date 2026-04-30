@@ -49,6 +49,7 @@ class ServerState:
         self._running = True
         self._start_time = time.monotonic()
         self._latest_detections: dict[str, Any] = {}
+        self._dataset_manager: Any | None = None
 
     @property
     def uptime_seconds(self) -> float:
@@ -118,6 +119,14 @@ class ServerState:
     def get_runtime_config(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._runtime_config)
+
+    def set_dataset_manager(self, manager: Any) -> None:
+        with self._lock:
+            self._dataset_manager = manager
+
+    def get_dataset_manager(self) -> Any | None:
+        with self._lock:
+            return self._dataset_manager
 
     def set_running(self, running: bool) -> None:
         with self._lock:

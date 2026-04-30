@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 
@@ -55,6 +56,18 @@ class ExperienceCollector:
         self.session_id = session_id
         self._frame_id = 0
         self._dropped = 0
+        self._lock = threading.Lock()
+
+    def start_session(self, session_id: str) -> None:
+        with self._lock:
+            self.session_id = session_id
+            self.enabled = True
+            self._frame_id = 0
+            self._dropped = 0
+
+    def stop_session(self) -> None:
+        with self._lock:
+            self.enabled = False
 
     def collect(
         self,
@@ -65,45 +78,58 @@ class ExperienceCollector:
         cmd: NavigationCommand,
         robot_state: RobotState,
     ) -> ExperienceFrame | None:
-        if not self.enabled:
-            return None
+        with self._lock:
+            if not self.enabled:
+                return None
+            session_id = self.session_id
 
         ts = time.monotonic()
         wall = time.time()
 
         ok, buf = cv2.imencode(".jpg", raw_frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
         if not ok:
-            logger.warning("JPEG encode failed, frame %d skipped", self._frame_id)
+            logger.warning("JPEG encode failed for dataset session %s", session_id)
             return None
 
         action = _encode_action(cmd)
 
-        exp = ExperienceFrame(
-            frame_id=self._frame_id,
-            timestamp=ts,
-            wall_time=wall,
-            raw_image_jpeg=buf.tobytes(),
-            detections=frame_det,
-            intent_predictions=intent_preds,
-            observation=observation.copy(),
-            action=action,
-            robot_state=robot_state,
-            session_id=self.session_id,
-        )
+        with self._lock:
+            if not self.enabled or self.session_id != session_id:
+                return None
+            frame_id = self._frame_id
+            self._frame_id += 1
 
-        self._frame_id += 1
+            exp = ExperienceFrame(
+                frame_id=frame_id,
+                timestamp=ts,
+                wall_time=wall,
+                raw_image_jpeg=buf.tobytes(),
+                detections=frame_det,
+                intent_predictions=intent_preds,
+                observation=observation.copy(),
+                action=action,
+                robot_state=robot_state,
+                session_id=session_id,
+            )
 
-        if not self._buffer.push(exp):
-            self._dropped += 1
-            if self._dropped % 100 == 0:
-                logger.warning("Experience buffer full — %d frames dropped", self._dropped)
+            pushed = self._buffer.push(exp)
+            if not pushed:
+                self._dropped += 1
+            dropped = self._dropped
+
+        if not pushed:
+            if dropped % 100 == 0:
+                logger.warning("Experience buffer full — %d frames dropped", dropped)
 
         return exp
 
     @property
     def stats(self) -> dict:
-        return {
-            "collected": self._frame_id,
-            "dropped": self._dropped,
-            "buffer_size": len(self._buffer),
-        }
+        with self._lock:
+            return {
+                "enabled": self.enabled,
+                "session_id": self.session_id,
+                "collected": self._frame_id,
+                "dropped": self._dropped,
+                "buffer_size": len(self._buffer),
+            }

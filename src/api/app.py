@@ -33,9 +33,10 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel
 
 from .state import VALID_MODE_OVERRIDES, ServerState
 
@@ -51,6 +52,10 @@ UPDATABLE_CONFIG_KEYS = frozenset(
         "watchdog_log_interval_s",
     }
 )
+
+
+class DatasetStartRequest(BaseModel):
+    mode: str = "intent_cnn"
 
 
 def create_app(state: ServerState) -> FastAPI:
@@ -142,6 +147,70 @@ def create_app(state: ServerState) -> FastAPI:
         return StreamingResponse(
             generate(),
             media_type="multipart/x-mixed-replace; boundary=frame",
+        )
+
+    # ------------------------------------------------------------------
+    # Dataset collection
+    # ------------------------------------------------------------------
+
+    @app.get("/dataset/status", tags=["dataset"])
+    def dataset_status() -> dict[str, Any]:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            return {"status": "unavailable", "message": "No dataset manager configured"}
+        return manager.status()
+
+    @app.post("/dataset/start", tags=["dataset"])
+    def dataset_start(body: DatasetStartRequest) -> dict[str, Any]:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        try:
+            return manager.start(body.mode)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/dataset/stop", tags=["dataset"])
+    def dataset_stop() -> dict[str, Any]:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        return manager.stop()
+
+    @app.delete("/dataset", tags=["dataset"])
+    def dataset_discard() -> dict[str, Any]:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        return manager.discard()
+
+    @app.get("/dataset/preview/{index}", tags=["dataset"])
+    def dataset_preview(index: int) -> Response:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        try:
+            path = manager.preview_frame_path(index)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return Response(content=path.read_bytes(), media_type="image/jpeg")
+
+    @app.get("/dataset/download", tags=["dataset"])
+    def dataset_download(background_tasks: BackgroundTasks) -> FileResponse:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        try:
+            zip_path, session_id = manager.build_zip()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        background_tasks.add_task(manager.cleanup_after_download)
+        return FileResponse(
+            zip_path,
+            media_type="application/zip",
+            filename=f"context_aware_dataset_{session_id}.zip",
+            background=background_tasks,
         )
 
     # ------------------------------------------------------------------
