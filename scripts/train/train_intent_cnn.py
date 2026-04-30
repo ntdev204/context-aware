@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import logging
 import random
 import sys
@@ -48,7 +49,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
 logging.basicConfig(
@@ -81,26 +82,46 @@ INTENT_NAMES = [
     "ERRATIC",
 ]
 
+Sample = tuple[Path, int, float, float]
+
+
+def _load_sample(
+    samples: list[Sample],
+    sample_idx: int,
+    transform,
+    hflip_p: float = 0.0,
+):
+    from PIL import Image
+    import torchvision.transforms.functional as TF
+
+    img_path, intent_cls, dx, dy = samples[sample_idx]
+    img = Image.open(img_path).convert("RGB")
+    if hflip_p > 0.0 and random.random() < hflip_p:
+        img = TF.hflip(img)
+        dx = -dx
+    if transform:
+        img = transform(img)
+    intent_label = torch.tensor(intent_cls, dtype=torch.long)
+    direction_gt = torch.tensor([dx, dy], dtype=torch.float32)
+    return img, intent_label, direction_gt
+
 
 class ROIDataset(Dataset):
     """Reads labeled ROI images from the intent_dataset folder structure."""
 
     def __init__(self, root: Path, transform=None, max_samples: int | None = None) -> None:
         self.transform = transform
-        self.samples: list[tuple[Path, int, float, float]] = []
+        self.samples: list[Sample] = []
 
         from collections import defaultdict
 
-        # Helper to parse cx and frame_id
-        def parse_meta(p: Path) -> dict:
-            parts = p.stem.split("_")
-            if len(parts) >= 7 and parts[0] == "roi":
-                return {
-                    "tid": parts[1],
-                    "cx": int(parts[2]),
-                    "fid": int(parts[6] if len(parts) == 8 else parts[3]),
-                }
-            return None
+        # Load sidecar metadata once — keyed by resolved image path.
+        # This is the primary source for tid, frame_id, and cx used to
+        # resolve CROSSING direction; filename parsing is NOT used.
+        meta_index = self._load_metadata(root)
+
+        def image_meta(img_path: Path) -> dict | None:
+            return meta_index.get(str(img_path.resolve()))
 
         for folder, (intent_cls, base_dx, base_dy) in LABEL_MAP.items():
             folder_path = root / folder
@@ -113,25 +134,44 @@ class ROIDataset(Dataset):
                 for img_path in imgs:
                     self.samples.append((img_path, intent_cls, base_dx, base_dy))
             else:
-                # Dynamic DX resolution for CROSSING
+                # Dynamic DX resolution for CROSSING.
+                # Group by track_uid from sidecar metadata, sort by frame_id,
+                # then infer direction from future cx position.
                 tracks = defaultdict(list)
+                no_meta: list[Path] = []
                 for img_path in imgs:
-                    meta = parse_meta(img_path)
-                    if meta:
-                        tracks[meta["tid"]].append((meta["fid"], meta["cx"], img_path))
+                    meta = image_meta(img_path)
+                    if meta and "cx" in meta:
+                        track_id = str(
+                            meta.get("track_uid") or meta.get("tid") or img_path.stem
+                        )
+                        frame_id = int(meta.get("frame_id", 0))
+                        cx = float(meta["cx"])
+                        tracks[track_id].append((frame_id, cx, img_path))
                     else:
-                        self.samples.append((img_path, intent_cls, base_dx, base_dy))
+                        no_meta.append(img_path)
+
+                # Images without sidecar metadata fall back to dx=0 (UNCERTAIN direction).
+                for img_path in no_meta:
+                    self.samples.append((img_path, intent_cls, base_dx, base_dy))
+                if no_meta:
+                    logger.warning(
+                        "CROSSING: %d images have no sidecar cx — direction defaulting to %.1f",
+                        len(no_meta), base_dx,
+                    )
 
                 for tid, frames in tracks.items():
                     frames.sort(key=lambda x: x[0])  # sort by frame_id
                     for i, (fid, cx, img_path) in enumerate(frames):
-                        # determine direction from future frames if possible
                         lookahead = min(i + 15, len(frames) - 1)
                         if lookahead > i:
                             future_cx = frames[lookahead][1]
                             dx = 0.8 if future_cx > cx else -0.8
+                        elif i > 0:
+                            prev_cx = frames[i - 1][1]
+                            dx = 0.8 if cx > prev_cx else -0.8
                         else:
-                            dx = 0.0  # fallback
+                            dx = 0.0  # single-frame track, truly unknown
                         self.samples.append((img_path, intent_cls, dx, base_dy))
 
         if max_samples and len(self.samples) > max_samples:
@@ -161,19 +201,69 @@ class ROIDataset(Dataset):
         for cls_id, n in sorted(counts.items()):
             logger.info("  Class %d (%s): %d images", cls_id, INTENT_NAMES[cls_id], n)
 
+    @staticmethod
+    def _load_metadata(root: Path) -> dict[str, dict]:
+        """Build {resolved_img_path_str -> metadata_dict} index from sidecar metadata.jsonl.
+
+        Scans both the dataset root and every label sub-folder so the index
+        covers images that have already been moved by autolabel.py.
+        """
+        index: dict[str, dict] = {}
+
+        candidate_dirs = [root] + [d for d in root.iterdir() if d.is_dir()]
+        for directory in candidate_dirs:
+            meta_path = directory / "metadata.jsonl"
+            if not meta_path.exists():
+                continue
+            with open(meta_path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    file_value = row.get("file")
+                    if not file_value:
+                        continue
+                    # Resolve against the directory that owns this JSONL file.
+                    img_path = (directory / file_value).resolve()
+                    index[str(img_path)] = row
+        return index
+
     def __len__(self) -> int:
         return len(self.samples)
 
     def __getitem__(self, idx: int):
-        from PIL import Image
+        return _load_sample(self.samples, idx, self.transform)
 
-        img_path, intent_cls, dx, dy = self.samples[idx]
-        img = Image.open(img_path).convert("RGB")
-        if self.transform:
-            img = self.transform(img)
-        intent_label = torch.tensor(intent_cls, dtype=torch.long)
-        direction_gt = torch.tensor([dx, dy], dtype=torch.float32)
-        return img, intent_label, direction_gt
+
+class _SplitView(Dataset):
+    """View of a shared sample list with its own transform.
+
+    Allows train and val to share the *same* subsampled sample list while
+    applying different transforms — eliminating the index-mismatch that
+    occurred when val_ds.dataset was replaced by a fresh ROIDataset.
+    """
+
+    def __init__(
+        self,
+        samples: list[Sample],
+        indices: list[int],
+        transform,
+        hflip_p: float = 0.0,
+    ) -> None:
+        self.samples = samples
+        self.indices = indices
+        self.transform = transform
+        self.hflip_p = hflip_p
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, idx: int):
+        return _load_sample(self.samples, self.indices[idx], self.transform, self.hflip_p)
 
 
 def build_transforms(augment: bool):
@@ -188,7 +278,9 @@ def build_transforms(augment: bool):
     ]
     if augment:
         aug = [
-            transforms.RandomHorizontalFlip(p=0.5),
+            # NOTE: HorizontalFlip is intentionally ABSENT here.
+            # It is handled in __getitem__ / _SplitView so that dx can be
+            # negated atomically with the image flip (avoids direction label corruption).
             transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2, hue=0.05),
             transforms.RandomAffine(degrees=10, translate=(0.05, 0.05), scale=(0.9, 1.1)),
             transforms.RandomGrayscale(p=0.05),
@@ -273,6 +365,17 @@ def compute_class_weights(dataset: ROIDataset, device: torch.device) -> torch.Te
         if weights[cls_id] == 0:
             weights[cls_id] = 1.0
     return weights.to(device)
+
+
+def _checkpoint_epoch(path: Path, device: torch.device) -> int:
+    if not path.exists():
+        return 0
+    try:
+        ckpt = torch.load(path, map_location=device)
+    except Exception as exc:
+        logger.warning("Could not inspect checkpoint epoch from %s: %s", path, exc)
+        return 0
+    return int(ckpt.get("epoch", 0)) if isinstance(ckpt, dict) else 0
 
 
 def train_one_epoch(
@@ -402,27 +505,51 @@ def train(args: argparse.Namespace) -> None:
     if use_amp:
         logger.info("Mixed-precision training (AMP) enabled")
 
-    # Dataset
+    resume_epoch = _checkpoint_epoch(Path(args.resume), device) if args.resume else 0
+    if args.resume and getattr(args, "epochs_are_additional", False) and resume_epoch > 0:
+        args.epochs += resume_epoch
+        logger.info(
+            "Resume mode: training %d additional epochs (target epoch %d)",
+            args.epochs - resume_epoch,
+            args.epochs,
+        )
+
+    # Dataset — load sample list ONCE (replay buffer applied), then split by index.
+    # _SplitView ensures val and train point into the *same* subsampled list so
+    # indices are never stale (fixes the bug where val_ds.dataset was replaced
+    # by a fresh full-size ROIDataset after random_split).
     dataset_root = Path(args.dataset)
     if not dataset_root.exists():
         logger.error("Dataset directory not found: %s", dataset_root)
         sys.exit(1)
 
-    full_dataset = ROIDataset(
-        dataset_root, transform=build_transforms(augment=True), max_samples=args.replay_buffer
-    )
-    if len(full_dataset) == 0:
+    index_ds = ROIDataset(dataset_root, transform=None, max_samples=args.replay_buffer)
+    if len(index_ds) == 0:
         logger.error("No images found in dataset. Check label folders: %s", list(LABEL_MAP))
         sys.exit(1)
+    if len(index_ds) < 2:
+        logger.error("Need at least 2 trainable images for a train/val split; found %d", len(index_ds))
+        sys.exit(1)
 
-    val_size = max(1, int(len(full_dataset) * args.val_split))
-    train_size = len(full_dataset) - val_size
-    train_ds, val_ds = random_split(full_dataset, [train_size, val_size])
+    all_indices = list(range(len(index_ds)))
+    random.shuffle(all_indices)
+    val_size = min(len(index_ds) - 1, max(1, int(len(index_ds) * args.val_split)))
+    val_indices = all_indices[:val_size]
+    train_indices = all_indices[val_size:]
 
-    # Val dataset should use inference-time transforms (no augmentation)
-    val_ds.dataset = ROIDataset(dataset_root, transform=build_transforms(augment=False))
+    train_ds = _SplitView(
+        index_ds.samples, train_indices,
+        transform=build_transforms(augment=True), hflip_p=0.5,
+    )
+    val_ds = _SplitView(
+        index_ds.samples, val_indices,
+        transform=build_transforms(augment=False), hflip_p=0.0,
+    )
 
-    logger.info("Train: %d  Val: %d  (total: %d)", train_size, val_size, len(full_dataset))
+    logger.info(
+        "Train: %d  Val: %d  (total: %d)",
+        len(train_ds), len(val_ds), len(index_ds),
+    )
 
     train_loader = DataLoader(
         train_ds,
@@ -476,8 +603,8 @@ def train(args: argparse.Namespace) -> None:
         else:
             logger.warning("Resume path not found: %s — starting fresh", ckpt_path)
 
-    # Loss & Optimiser
-    class_weights = compute_class_weights(full_dataset, device)
+    # Loss & Optimiser — class weights derived from the same subsampled index_ds
+    class_weights = compute_class_weights(index_ds, device)
     intent_criterion = nn.CrossEntropyLoss(weight=class_weights)
     dir_criterion = nn.MSELoss()
     lambda_dir = args.lambda_dir
@@ -490,6 +617,14 @@ def train(args: argparse.Namespace) -> None:
 
     # Cosine annealing LR — smooth decay across all epochs
     total_epochs = args.epochs - start_epoch + 1
+    if total_epochs <= 0:
+        logger.error(
+            "No epochs left to train: start_epoch=%d, target_epoch=%d. "
+            "Increase --epochs or pass --epochs-are-additional when resuming.",
+            start_epoch,
+            args.epochs,
+        )
+        sys.exit(1)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
         T_max=total_epochs,
@@ -654,6 +789,11 @@ def main() -> None:
     parser.add_argument("--save-every", type=int, default=5, help="Save checkpoint every N epochs")
     parser.add_argument(
         "--resume", type=str, default=None, help="Path to checkpoint .pt to resume training from"
+    )
+    parser.add_argument(
+        "--epochs-are-additional",
+        action="store_true",
+        help="When resuming, interpret --epochs as extra epochs instead of final target epoch",
     )
     parser.add_argument(
         "--ewc-lambda",

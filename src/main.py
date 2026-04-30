@@ -440,7 +440,12 @@ class AIServer:
                 robot_state=robot_state,
             )
         if c["roi_saver"] is not None and len(rois) > 0:
-            c["roi_saver"].push(rois, frame_id)
+            c["roi_saver"].push(
+                rois,
+                frame_id,
+                robot_state=robot_state,
+                timestamp_ms=time.time() * 1000.0,
+            )
 
         return _PerceptionSnapshot(
             frame=frame,

@@ -18,6 +18,7 @@ MIN_TOTAL_IMAGES = 500
 MIN_CLASS_IMAGES = 50
 MAX_IMBALANCE_RATIO = 10.0
 MAX_DUPLICATE_PCT = 5.0
+IGNORED_CLASSES = {"UNCERTAIN", "uncertain"}
 
 
 def _remove_bad_files(files_meta: list[dict]):
@@ -52,21 +53,28 @@ def validate(report_path: Path) -> int:
         # (We don't know exactly which class they belonged to without parsing,
         # but total_images adjustment is enough for the block threshold)
 
-    # 2. Block checks
-    total = report.get("total_images", 0)
+    # 2. Block checks. Training ignores UNCERTAIN samples, so quality gates
+    # must use trainable images only.
+    raw_classes = report.get("classes", {})
+    classes = {name: count for name, count in raw_classes.items() if name not in IGNORED_CLASSES}
+    total = sum(classes.values())
+    ignored_total = sum(count for name, count in raw_classes.items() if name in IGNORED_CLASSES)
+
+    if ignored_total:
+        print(f"[*] Ignoring {ignored_total} UNCERTAIN images for training gates.")
+
     if total < MIN_TOTAL_IMAGES:
-        print(f"[❌] BLOCKED: Total images ({total}) < required ({MIN_TOTAL_IMAGES})")
+        print(f"[❌] BLOCKED: Trainable images ({total}) < required ({MIN_TOTAL_IMAGES})")
         status = 1
     else:
-        print(f"[✅] Total images: {total}")
+        print(f"[✅] Trainable images: {total}")
 
     if status == 1:
         return status  # Fatal, no need to check warnings
 
     # 3. Warning checks
-    classes = report.get("classes", {})
     if not classes:
-        print("[❌] BLOCKED: No classes found.")
+        print("[❌] BLOCKED: No trainable classes found.")
         return 1
 
     counts = list(classes.values())

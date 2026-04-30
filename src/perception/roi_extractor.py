@@ -20,7 +20,10 @@ class PersonROI:
     bbox: tuple[int, int, int, int]
     track_id: int
     relative_position: tuple[float, float]
-    distance_estimate: float = 0.0
+    distance_estimate: float = 0.0  # normalised [0, 1]
+    dist_mm: float = 0.0  # raw depth in mm from sensor (0 = unknown)
+    frame_w: int = 0
+    frame_h: int = 0
 
 
 class ROIExtractor:
@@ -80,6 +83,8 @@ class ROIExtractor:
         cy_norm = ((y1 + y2) / 2.0) / frame_h
 
         dist_estimate = max(0.0, 1.0 - (bh / frame_h))
+        # Convert metres → mm; 0 when source is "unknown"
+        dist_mm = round(person.distance * 1000.0) if person.distance_source == "depth" else 0.0
 
         return PersonROI(
             image=resized,
@@ -87,4 +92,7 @@ class ROIExtractor:
             track_id=person.track_id,
             relative_position=(cx_norm, cy_norm),
             distance_estimate=dist_estimate,
+            dist_mm=dist_mm,
+            frame_w=frame_w,
+            frame_h=frame_h,
         )
