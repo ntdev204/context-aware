@@ -29,52 +29,76 @@ class DatasetExplorer:
 
         self.images: list[dict] = []
         self.classes: set[str] = set()
+        self._metadata_index = self._load_metadata()
 
-    def _parse_filename(self, path: Path) -> dict | None:
-        """Parse filename to extract metadata and label."""
+    def _load_metadata(self) -> dict[str, dict]:
+        index: dict[str, dict] = {}
+        meta_path = self.dataset_dir / "metadata.jsonl"
+        if not meta_path.exists():
+            return index
+
+        with open(meta_path, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                file_value = row.get("file")
+                if not file_value:
+                    continue
+                path = self.dataset_dir / file_value
+                index[str(path.resolve())] = row
+        return index
+
+    def _read_image_meta(self, path: Path) -> dict | None:
+        """Read ROI metadata from sidecar JSONL, with filename fallback for manual images."""
+        label = path.parent.name
+        sidecar = self._metadata_index.get(str(path.resolve()))
+        if sidecar:
+            return {
+                "path": str(path),
+                "filename": path.name,
+                "label": sidecar.get("label", label),
+                "track_id": str(sidecar.get("track_uid") or sidecar.get("tid", "")),
+                "cx_px": sidecar.get("cx"),
+                "cy_px": sidecar.get("cy"),
+                "dist_mm": sidecar.get("dist_mm"),
+                "dsrc": "depth" if sidecar.get("dist_mm", 0) else "unknown",
+                "frame_id": sidecar.get("frame_id", 0),
+                "timestamp": sidecar.get("ts", 0),
+                "depth_valid": sidecar.get("depth_valid", False),
+            }
+
         stem = path.stem
         parts = stem.split("_")
-        if len(parts) < 5 or parts[0] != "roi":
-            return None
+        track_id = ""
+        frame_id = 0
+        for part in parts:
+            if part.startswith("t") and part[1:].isdigit():
+                track_id = part[1:]
+            elif part.startswith("f") and part[1:].isdigit():
+                frame_id = int(part[1:])
 
-        # Determine class from parent folder
-        label = path.parent.name
-
-        try:
-            if len(parts) == 8:
-                return {
-                    "path": str(path),
-                    "filename": path.name,
-                    "label": label,
-                    "track_id": str(parts[1]),
-                    "cx_px": int(parts[2]),
-                    "cy_px": int(parts[3]),
-                    "dist_mm": int(parts[4]),
-                    "dsrc": parts[5],
-                    "frame_id": int(parts[6]),
-                    "timestamp": int(parts[7]),
-                }
-            else:
-                return {
-                    "path": str(path),
-                    "filename": path.name,
-                    "label": label,
-                    "track_id": str(parts[1]),
-                    "cx_px": int(parts[2]),
-                    "cy_px": None,
-                    "dist_mm": None,
-                    "dsrc": None,
-                    "frame_id": int(parts[3]),
-                    "timestamp": int(parts[4] if len(parts) > 4 else 0),
-                }
-        except ValueError:
-            return None
+        return {
+            "path": str(path),
+            "filename": path.name,
+            "label": label,
+            "track_id": track_id or path.stem,
+            "cx_px": None,
+            "cy_px": None,
+            "dist_mm": None,
+            "dsrc": None,
+            "frame_id": frame_id,
+            "timestamp": 0,
+            "depth_valid": False,
+        }
 
     def run(self) -> str:
         """Run full exploration and return path to JSON report."""
         print(f"[*] Scanning {self.dataset_dir} ...")
         for img_path in self.dataset_dir.rglob("*.jpg"):
-            meta = self._parse_filename(img_path)
+            if "reports" in img_path.parts:
+                continue
+            meta = self._read_image_meta(img_path)
             if meta:
                 self.images.append(meta)
                 self.classes.add(meta["label"])
@@ -128,11 +152,27 @@ class DatasetExplorer:
                 hashes[h] = img["filename"]
 
         # 3. Track Length
-        tracks = defaultdict(list)
+        # Only sidecar-backed images have meaningful trajectory data.
+        # Manual-import images (no sidecar) are assigned path.stem as track_id
+        # which makes every image appear as a length-1 track — those are reported
+        # separately so short_tracks_count reflects real trajectory quality.
+        tracks_sidecar: dict[str, list] = defaultdict(list)
+        no_sidecar_count = 0
         for img in self.images:
-            tracks[img["track_id"]].append(img)
+            has_sidecar = self._metadata_index.get(
+                str(Path(img["path"]).resolve())
+            ) is not None
+            if has_sidecar:
+                tracks_sidecar[img["track_id"]].append(img)
+            else:
+                no_sidecar_count += 1
 
-        short_tracks = {tid: len(imgs) for tid, imgs in tracks.items() if len(imgs) < 5}
+        short_tracks = {
+            tid: len(imgs)
+            for tid, imgs in tracks_sidecar.items()
+            if len(imgs) < 5
+        }
+        tracks = tracks_sidecar  # keep for total_tracks report
 
         # 4. Generate Grids
         print("[*] Generating sample grids...")
@@ -172,6 +212,9 @@ class DatasetExplorer:
             "duplicates": [i for i in issues if i["reason"] == "duplicate"],
             "short_tracks_count": len(short_tracks),
             "total_tracks": len(tracks),
+            # Images without sidecar JSONL (manual imports, legacy data).
+            # Excluded from short_tracks_count to avoid false quality warnings.
+            "no_sidecar_count": no_sidecar_count,
             "status": "PASS" if len(class_counts) > 0 else "FAIL",
         }
 
@@ -225,10 +268,11 @@ class DatasetExplorer:
             <div class="card">
                 <h2>Summary</h2>
                 <p>Total Images: {report["total_images"]}</p>
-                <p>Total Tracks: {report["total_tracks"]}</p>
-                <p>Short Tracks (<5 imgs): <span class="{"warn" if report["short_tracks_count"] > 0 else "ok"}">{report["short_tracks_count"]}</span></p>
-                <p>Corrupt Images: <span class="{"warn" if report["corrupt_images"] else "ok"}">{len(report["corrupt_images"])}</span></p>
-                <p>Duplicates: <span class="{"warn" if report["duplicates"] else "ok"}">{len(report["duplicates"])}</span></p>
+                <p>Total Tracks (sidecar): {report["total_tracks"]}</p>
+                <p>Manual imports (no sidecar): {report["no_sidecar_count"]}</p>
+                <p>Short Tracks &lt;5 imgs (sidecar only): {report["short_tracks_count"]}</p>
+                <p>Corrupt Images: {len(report["corrupt_images"])}</p>
+                <p>Duplicates: {len(report["duplicates"])}</p>
             </div>
 
             <div class="card">

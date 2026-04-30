@@ -3,13 +3,12 @@
 Chạy ngầm trên Laptop Windows. Theo dõi thư mục roi_dataset/,
 khi phát hiện file .tar.gz mới từ Jetson sẽ tự động:
     1. Giải nén archive
-    2. Chạy auto-label → phân loại ảnh vào LEFT / RIGHT / STRAIGHT
+    2. Chạy auto-label → phân loại ảnh vào các intent classes
     3. Dọn dẹp file tạm
 
 Usage:
-    python scripts/auto_watcher.py
-    python scripts/auto_watcher.py --watch D:/nckh/context-aware/roi_dataset --output D:/nckh/context-aware/intent_dataset
-    python scripts/auto_watcher.py --threshold 40 --lookahead 20
+    python scripts/data/auto_watcher.py
+    python scripts/data/auto_watcher.py --watch D:/nckh/context-aware/roi_dataset --output D:/nckh/context-aware/intent_dataset
 
 Cài dependency (1 lần):
     pip install watchdog
@@ -51,18 +50,18 @@ STABLE_WAIT_S = 5  # Giây chờ sau khi file ngừng tăng kích thước
 def process_archive(
     archive: Path,
     output_dir: Path,
-    threshold: int,
-    lookahead: int,
     auto_train: bool = False,
     training_cfg: dict | None = None,
 ) -> None:
     """Extract and auto-label one .tar.gz archive, then optionally trigger training pipeline."""
-    # Import ở đây để tránh circular import khi test
-    from autolabel import autolabel, extract_archives
+    # Import here to avoid circular import in tests
+    from autolabel import extract_archives, run_autolabel
 
     logger.info("New batch detected: %s (%.1f MB)", archive.name, archive.stat().st_size / 1e6)
 
     extract_dir = archive.parent / "_extracted" / archive.stem
+    if extract_dir.exists():
+        shutil.rmtree(extract_dir)
     extract_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("Extracting -> %s", extract_dir)
@@ -72,19 +71,13 @@ def process_archive(
         logger.error("Extract failed: %s", exc)
         return
 
-    logger.info("Auto-labeling -> %s", output_dir / "auto")
+    logger.info("Auto-labeling -> %s", output_dir)
     try:
-        stats = autolabel(
-            input_dir=extract_dir,
-            output_dir=output_dir / "auto",
-            threshold_px=threshold,
-            lookahead=lookahead,
-            min_track_len=5,
-            move=True,
-        )
+        stats = run_autolabel(batch_dir=extract_dir, output_dir=output_dir)
     except Exception as exc:
         logger.error("Auto-label failed: %s", exc)
         return
+
 
     # Log phân phối nhãn
     total = sum(v for k, v in stats.items() if k != "short_track_skipped")
@@ -97,7 +90,7 @@ def process_archive(
             "CROSSING",
             "FOLLOWING",
             "ERRATIC",
-            "uncertain",
+            "UNCERTAIN",
         )
     )
     logger.info("Labels: %s  |  skipped_short=%d", label_summary, stats["short_track_skipped"])
@@ -109,7 +102,7 @@ def process_archive(
         pass
 
     # Đánh dấu archive đã xử lý (rename thay vì xóa — an toàn hơn)
-    done_path = archive.with_suffix(".tar.gz.done")
+    done_path = archive.with_name(f"{archive.name}.done")
     archive.rename(done_path)
     logger.info("Done: renamed to %s", done_path.name)
 
@@ -175,12 +168,18 @@ def _run_orchestration_pipeline(dataset_dir: Path, cfg: dict) -> None:
         "--epochs",
         str(epochs),
         "--output",
-        str(model_path),
+        str(model_dir),
+        "--lr",
+        str(cfg.get("learning_rate", 1e-4)),
+        "--replay-buffer",
+        str(cfg.get("replay_buffer_size", 2000)),
+        "--ewc-lambda",
+        str(cfg.get("ewc_lambda", 5000)),
     ]
 
     if model_path.exists():
         logger.info("  [Hint] Found existing checkpoint -> Continual Training.")
-        # Future: append --checkpoint to load previous weights if needed
+        train_cmd.extend(["--resume", str(model_path), "--epochs-are-additional"])
 
     try:
         # Stream output directly to terminal so user can see progress bar
@@ -209,8 +208,6 @@ def is_file_stable(path: Path, wait: int = STABLE_WAIT_S) -> bool:
 def run_with_watchdog(
     watch_dir: Path,
     output_dir: Path,
-    threshold: int,
-    lookahead: int,
     auto_train: bool,
     training_cfg: dict,
 ) -> None:
@@ -222,12 +219,10 @@ def run_with_watchdog(
             if event.is_directory:
                 return
             path = Path(event.src_path)
-            if path.suffix == ".gz" and path.name.endswith(".tar.gz"):
+            if path.suffix == ".zip" or path.name.endswith(".tar.gz"):
                 logger.info("FileCreated event: %s", path.name)
                 if is_file_stable(path):
-                    process_archive(
-                        path, output_dir, threshold, lookahead, auto_train, training_cfg
-                    )
+                    process_archive(path, output_dir, auto_train, training_cfg)
 
     observer = Observer()
     observer.schedule(BatchHandler(), str(watch_dir), recursive=False)
@@ -245,8 +240,6 @@ def run_with_watchdog(
 def run_polling(
     watch_dir: Path,
     output_dir: Path,
-    threshold: int,
-    lookahead: int,
     auto_train: bool,
     training_cfg: dict,
     poll_interval: int = 10,
@@ -254,9 +247,10 @@ def run_polling(
     """Fallback polling loop (no watchdog dependency)."""
     seen: set[Path] = set()
 
-    # Seed với các file đã có từ trước (không xử lý lại)
+    # Seed with pre-existing files so they are not re-processed
     seen.update(watch_dir.glob("*.tar.gz"))
-    seen.update(watch_dir.glob("*.tar.gz.done"))
+    seen.update(watch_dir.glob("*.zip"))
+    seen.update(watch_dir.glob("*.done"))
 
     logger.info(
         "Polling mode — checking every %ds for new batches in: %s", poll_interval, watch_dir
@@ -264,14 +258,13 @@ def run_polling(
 
     try:
         while True:
-            for archive in sorted(watch_dir.glob("*.tar.gz")):
+            archives = list(watch_dir.glob("*.tar.gz")) + list(watch_dir.glob("*.zip"))
+            for archive in sorted(archives):
                 if archive not in seen:
                     seen.add(archive)
                     logger.info("Polling detected: %s", archive.name)
                     if is_file_stable(archive):
-                        process_archive(
-                            archive, output_dir, threshold, lookahead, auto_train, training_cfg
-                        )
+                        process_archive(archive, output_dir, auto_train, training_cfg)
             time.sleep(poll_interval)
     except KeyboardInterrupt:
         logger.info("Watcher stopped by user.")
@@ -291,7 +284,7 @@ def main() -> None:
         "--watch",
         type=Path,
         default=DEFAULT_WATCH_DIR,
-        help="Directory to watch for .tar.gz batches",
+        help="Directory to watch for .zip or .tar.gz batches",
     )
     parser.add_argument(
         "--output", type=Path, default=DEFAULT_OUTPUT_DIR, help="Output labeled dataset directory"
@@ -300,9 +293,14 @@ def main() -> None:
         "--threshold",
         type=int,
         default=30,
-        help="Pixel shift threshold for LEFT/RIGHT classification",
+        help="[Deprecated — no longer used] Kept for backwards CLI compatibility only.",
     )
-    parser.add_argument("--lookahead", type=int, default=15, help="Frames ahead to compare cx_px")
+    parser.add_argument(
+        "--lookahead",
+        type=int,
+        default=15,
+        help="[Deprecated — no longer used] Kept for backwards CLI compatibility only.",
+    )
     parser.add_argument("--poll", action="store_true", help="Force polling mode (skip watchdog)")
     parser.add_argument(
         "--interval", type=int, default=10, help="Poll interval in seconds (polling mode only)"
@@ -322,7 +320,7 @@ def main() -> None:
 
     logger.info("ROI Auto-Watcher | watch=%s", watch_dir)
     logger.info("  Output: %s", output_dir)
-    logger.info("  Labels: threshold=%dpx  lookahead=%d frames", args.threshold, args.lookahead)
+    logger.info("  Labeling thresholds managed internally by autolabel.py")
 
     # Load training config
     training_yaml = Path("config/training.yaml")
@@ -359,19 +357,9 @@ def main() -> None:
             )
 
     if use_watchdog:
-        run_with_watchdog(
-            watch_dir, output_dir, args.threshold, args.lookahead, auto_train, training_cfg
-        )
+        run_with_watchdog(watch_dir, output_dir, auto_train, training_cfg)
     else:
-        run_polling(
-            watch_dir,
-            output_dir,
-            args.threshold,
-            args.lookahead,
-            auto_train,
-            training_cfg,
-            args.interval,
-        )
+        run_polling(watch_dir, output_dir, auto_train, training_cfg, args.interval)
 
 
 if __name__ == "__main__":
