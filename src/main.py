@@ -20,7 +20,6 @@ import logging
 import signal
 import threading
 import time
-import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,6 +28,7 @@ from .communication import ZMQPublisher, ZMQSubscriber
 from .config import load_config, setup_logging
 from .experience.buffer import ExperienceBuffer
 from .experience.collector import ExperienceCollector
+from .experience.dataset_manager import DatasetManager
 from .experience.roi_saver import ROISaver
 from .navigation import (
     ContextBuilder,
@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class _PerceptionSnapshot:
+    frame: Any
     frame_det: FrameDetections
     cmd: NavigationCommand
     frame_id: int
@@ -208,35 +209,39 @@ def _build_pipeline(cfg) -> dict:
         watchdog_timeout_ms=safe_cfg.get("watchdog_timeout_ms", 500.0),
     )
 
-    _hdf5_enabled = exp_cfg.get("hdf5_enabled", False)
-    exp_buffer = (
-        ExperienceBuffer(
-            max_size=exp_cfg.get("buffer_size", 10_000),
-            write_dir=exp_cfg.get("write_dir", "logs/experience"),
-            write_format=exp_cfg.get("write_format", "hdf5"),
-            async_write=exp_cfg.get("async_write", True),
-        )
-        if _hdf5_enabled
-        else None
+    _collection_enabled = exp_cfg.get("collection_enabled", exp_cfg.get("enabled", True))
+    exp_buffer = ExperienceBuffer(
+        max_size=exp_cfg.get("buffer_size", 10_000),
+        write_dir=exp_cfg.get("write_dir", "logs/experience"),
+        write_format=exp_cfg.get("write_format", "hdf5"),
+        async_write=exp_cfg.get("async_write", True),
     )
 
-    exp_collector = None
-    if _hdf5_enabled:
-        assert exp_buffer is not None
-        exp_collector = ExperienceCollector(
-            buffer=exp_buffer,
-            jpeg_quality=exp_cfg.get("jpeg_quality", 85),
-            enabled=True,
-            session_id=str(uuid.uuid4())[:8],
-        )
+    exp_collector = ExperienceCollector(
+        buffer=exp_buffer,
+        jpeg_quality=exp_cfg.get("jpeg_quality", 85),
+        enabled=False,
+        session_id="",
+    )
 
     roi_saver = (
         ROISaver(
             save_dir=exp_cfg.get("roi_save_dir", "logs/roi_dataset"),
             jpeg_quality=exp_cfg.get("roi_jpeg_quality", 90),
         )
-        if not _hdf5_enabled
+        if _collection_enabled
         else None
+    )
+    if roi_saver is None:
+        roi_saver = ROISaver(
+            save_dir=exp_cfg.get("roi_save_dir", "logs/roi_dataset"),
+            jpeg_quality=exp_cfg.get("roi_jpeg_quality", 90),
+        )
+
+    dataset_manager = DatasetManager(
+        roi_saver=roi_saver,
+        exp_collector=exp_collector,
+        exp_buffer=exp_buffer,
     )
 
     return dict(
@@ -252,6 +257,7 @@ def _build_pipeline(cfg) -> dict:
         exp_buffer=exp_buffer,
         exp_collector=exp_collector,
         roi_saver=roi_saver,
+        dataset_manager=dataset_manager,
         api_host=api_cfg.get("host", "0.0.0.0"),
         api_port=api_cfg.get("port", 8080),
         stream_jpeg_quality=api_cfg.get("stream_jpeg_quality", 70),
@@ -266,6 +272,7 @@ class AIServer:
         self._running = False
         self._state = ServerState()
         self._components = _build_pipeline(cfg)
+        self._state.set_dataset_manager(self._components["dataset_manager"])
         self._perception_worker: _AsyncPerceptionWorker | None = None
 
     def start(self) -> None:
@@ -354,7 +361,8 @@ class AIServer:
                 cmd = latest.cmd
 
             metrics = self._state.get_metrics()
-            annotated = frame.copy()
+            render_frame = latest.frame if latest is not None else frame
+            annotated = render_frame.copy()
             annotated = draw_detections(
                 annotated,
                 frame_det.persons,
@@ -431,10 +439,11 @@ class AIServer:
                 cmd=cmd,
                 robot_state=robot_state,
             )
-        elif c["roi_saver"] is not None and len(rois) > 0:
+        if c["roi_saver"] is not None and len(rois) > 0:
             c["roi_saver"].push(rois, frame_id)
 
         return _PerceptionSnapshot(
+            frame=frame,
             frame_det=frame_det,
             cmd=cmd,
             frame_id=frame_id,
