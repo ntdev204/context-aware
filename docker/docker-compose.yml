@@ -120,6 +120,7 @@ services:
       - PYTHONPATH=/workspace
     ports:
       - "2222:22"
+      - "8081:8080"
     networks: [robot-net]
     restart: unless-stopped
     deploy:
