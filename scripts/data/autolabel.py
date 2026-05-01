@@ -61,6 +61,10 @@ WINDOW_SIZE = 5
 LABELS = tuple(INTENT_NAMES)
 
 
+def label_dir_name(label: str | None) -> str:
+    return canonical_label(label).lower()
+
+
 def _empty_stats() -> dict[str, int]:
     stats = {label: 0 for label in LABELS}
     stats["short_track_skipped"] = 0
@@ -137,7 +141,8 @@ def _write_labeled_sample(row: dict[str, Any], out_dir: Path) -> bool:
         return False
 
     label = canonical_label(row["label"])
-    dest_dir = out_dir / label
+    label_dir = label_dir_name(label)
+    dest_dir = out_dir / label_dir
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     dest_name = _safe_dataset_filename(row, src_path)
@@ -151,7 +156,7 @@ def _write_labeled_sample(row: dict[str, Any], out_dir: Path) -> bool:
     }
     meta.update(
         {
-            "file": f"{label}/{dest_name}",
+            "file": f"{label_dir}/{dest_name}",
             "source_file": row.get("file", src_path.name),
             "label": label,
             "label_source": row.get("label_source", "heuristic"),
@@ -173,14 +178,14 @@ def _write_labeled_sample(row: dict[str, Any], out_dir: Path) -> bool:
         jf.write(json.dumps(meta, ensure_ascii=False) + "\n")
 
     if needs_human_review(label):
-        review_dir = out_dir / "review_queue" / label
+        review_dir = out_dir / "review_queue" / label_dir
         review_dir.mkdir(parents=True, exist_ok=True)
         review_path = review_dir / dest_name
         if not review_path.exists():
             shutil.copy2(dest_path, review_path)
             review_ref = {
-                "file": f"review_queue/{label}/{dest_name}",
-                "dataset_file": f"{label}/{dest_name}",
+                "file": f"review_queue/{label_dir}/{dest_name}",
+                "dataset_file": f"{label_dir}/{dest_name}",
                 "label": label,
                 "track_uid": row.get("_track_uid"),
                 "frame_id": row.get("frame_id", 0),

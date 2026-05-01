@@ -14,14 +14,14 @@ from scripts.train.train_intent_cnn import ROIDataset, _split_by_track
 def _build_dataset_root(num_frames: int = 3) -> Path:
     root = Path(tempfile.mkdtemp(prefix="intent_dataset_api_"))
     rows = []
-    class_dir = root / "STATIONARY"
+    class_dir = root / "stationary"
     class_dir.mkdir(parents=True, exist_ok=True)
     for i in range(num_frames):
         name = f"stationary_t1_f{i:06d}.jpg"
         Image.fromarray(np.zeros((256, 128, 3), dtype=np.uint8)).save(class_dir / name)
         rows.append(
             {
-                "file": f"STATIONARY/{name}",
+                "file": f"stationary/{name}",
                 "label": "STATIONARY",
                 "track_uid": "track_1",
                 "frame_id": i,
@@ -77,7 +77,7 @@ class TestROIDatasetTemporalAPI:
                 handle.write(
                     json.dumps(
                         {
-                            "file": "STATIONARY/stationary_t1_f000000.jpg",
+                            "file": "stationary/stationary_t1_f000000.jpg",
                             "label": "STATIONARY",
                             "track_uid": "track_1",
                             "frame_id": 0,

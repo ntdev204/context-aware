@@ -26,6 +26,10 @@ except Exception:  # pragma: no cover
         }
 
 
+def label_dir_name(label: str | None) -> str:
+    return canonical_label(label).lower()
+
+
 def _append_jsonl_line(path: Path, row: dict) -> None:
     lock_path = path.with_suffix(path.suffix + ".lock")
     start = time.time()
@@ -95,7 +99,8 @@ def import_dataset(export_dir: Path, output_dir: Path) -> None:
             print(f"[!] Skipping non-trainable label {classes[class_id]} in {txt_path.name}")
             continue
 
-        class_dir = output_dir / class_name
+        class_dir_name = label_dir_name(class_name)
+        class_dir = output_dir / class_dir_name
         class_dir.mkdir(exist_ok=True)
 
         dest_path = class_dir / f"human_{img_path.name}"
@@ -103,7 +108,7 @@ def import_dataset(export_dir: Path, output_dir: Path) -> None:
         _append_jsonl_line(
             output_dir / "imported_metadata.jsonl",
             {
-                "file": f"{class_name}/{dest_path.name}",
+                "file": f"{class_dir_name}/{dest_path.name}",
                 "source_file": img_path.name,
                 "label": class_name,
                 "label_source": "human",
