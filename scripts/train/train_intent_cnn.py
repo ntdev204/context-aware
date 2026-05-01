@@ -6,12 +6,12 @@ and auto-labeled by scripts/autolabel.py.
 
 Dataset structure expected:
     intent_dataset/
-    ├── STATIONARY/  roi_*.jpg  → STATIONARY (0), dx=0.0, dy=0.0
-    ├── APPROACHING/ roi_*.jpg  → APPROACHING (1), dx=0.0, dy=-0.6
-    ├── DEPARTING/   roi_*.jpg  → DEPARTING (2), dx=0.0, dy=+0.6
-    ├── CROSSING/    roi_*.jpg  → CROSSING (3), dx=±0.8, dy=0.0 (dx from cx shift)
-    ├── ERRATIC/     roi_*.jpg  → ERRATIC (4), dx=0.0, dy=0.0
-    └── UNCERTAIN/   roi_*.jpg  → review/abstain only, excluded from training
+    ├── stationary/  roi_*.jpg  → STATIONARY (0), dx=0.0, dy=0.0
+    ├── approaching/ roi_*.jpg  → APPROACHING (1), dx=0.0, dy=-0.6
+    ├── departing/   roi_*.jpg  → DEPARTING (2), dx=0.0, dy=+0.6
+    ├── crossing/    roi_*.jpg  → CROSSING (3), dx=±0.8, dy=0.0 (dx from cx shift)
+    ├── erratic/     roi_*.jpg  → ERRATIC (4), dx=0.0, dy=0.0
+    └── uncertain/   roi_*.jpg  → review/abstain only, excluded from training
 
 Label mapping rationale
 -----------------------

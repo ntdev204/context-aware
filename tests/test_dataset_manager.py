@@ -58,13 +58,13 @@ def _install_data_script_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     autolabel = ModuleType("scripts.data.autolabel")
 
     def run_autolabel(raw_dir: Path, labeled_dir: Path):
-        cls_dir = labeled_dir / "STATIONARY"
+        cls_dir = labeled_dir / "stationary"
         cls_dir.mkdir(parents=True, exist_ok=True)
         source = next(raw_dir.glob("*.jpg"))
         target = cls_dir / source.name
         target.write_bytes(source.read_bytes())
         row = {
-            "file": f"STATIONARY/{source.name}",
+            "file": f"stationary/{source.name}",
             "label": "STATIONARY",
             "track_uid": "test:t1",
             "frame_id": 1,
@@ -116,28 +116,47 @@ def _install_data_script_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "scripts.data.build_intent_manifest", manifest_mod)
 
 
-def test_intent_download_builds_session_train_ready_bundle(tmp_path, monkeypatch):
-    _install_data_script_stubs(monkeypatch)
-
+def _build_manager(tmp_path):
     session_dir = tmp_path / "20260501_010203_abcd1234"
     session_dir.mkdir()
     (session_dir / "roi_t1_f000001.jpg").write_bytes(b"fake-jpeg")
+    (session_dir / "roi_t1_f000002.jpg").write_bytes(b"fake-jpeg-2")
     (session_dir / "metadata.jsonl").write_text(
-        json.dumps(
-            {
-                "file": "roi_t1_f000001.jpg",
-                "frame_id": 1,
-                "session_id": session_dir.name,
-                "tid": 1,
-                "ts": 1,
-                "cx": 10,
-                "cy": 10,
-                "bw": 10,
-                "bh": 20,
-                "frame_w": 640,
-                "frame_h": 480,
-                "dist_mm": 1000,
-            }
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "file": "roi_t1_f000001.jpg",
+                        "frame_id": 1,
+                        "session_id": session_dir.name,
+                        "tid": 1,
+                        "ts": 1,
+                        "cx": 10,
+                        "cy": 10,
+                        "bw": 10,
+                        "bh": 20,
+                        "frame_w": 640,
+                        "frame_h": 480,
+                        "dist_mm": 1000,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "file": "roi_t1_f000002.jpg",
+                        "frame_id": 2,
+                        "session_id": session_dir.name,
+                        "tid": 1,
+                        "ts": 2,
+                        "cx": 12,
+                        "cy": 10,
+                        "bw": 10,
+                        "bh": 20,
+                        "frame_w": 640,
+                        "frame_h": 480,
+                        "dist_mm": 950,
+                    }
+                ),
+            ]
         )
         + "\n",
         encoding="utf-8",
@@ -150,6 +169,35 @@ def test_intent_download_builds_session_train_ready_bundle(tmp_path, monkeypatch
     )
     manager._active_mode = DATASET_INTENT
     manager._session_id = session_dir.name
+    return manager, session_dir
+
+
+def test_intent_save_keeps_raw_session_for_manual_review(tmp_path):
+    manager, session_dir = _build_manager(tmp_path)
+
+    status = manager.save()
+
+    assert status["saved"] is True
+    assert status["dataset_stage"] == "raw_review"
+    assert (session_dir / "manifest.json").exists()
+    assert not (session_dir / "intent_dataset").exists()
+
+
+def test_delete_image_removes_file_and_matching_metadata(tmp_path):
+    manager, session_dir = _build_manager(tmp_path)
+
+    result = manager.delete_image(0)
+
+    assert result["count"] == 1
+    assert not (session_dir / "roi_t1_f000001.jpg").exists()
+    assert (session_dir / "roi_t1_f000002.jpg").exists()
+    metadata = (session_dir / "metadata.jsonl").read_text(encoding="utf-8")
+    assert "roi_t1_f000001.jpg" not in metadata
+    assert "roi_t1_f000002.jpg" in metadata
+
+
+def test_intent_download_zips_raw_session_without_autolabel(tmp_path):
+    manager, session_dir = _build_manager(tmp_path)
 
     zip_path, session_id = manager.build_zip()
 
@@ -159,6 +207,40 @@ def test_intent_download_builds_session_train_ready_bundle(tmp_path, monkeypatch
 
     assert f"{session_id}/raw/roi_t1_f000001.jpg" in names
     assert f"{session_id}/raw/metadata.jsonl" in names
+    assert f"{session_id}/manifest.json" in names
+    assert all("intent_dataset" not in name for name in names)
+
+
+def test_intent_autolabel_is_explicit_manual_step(tmp_path, monkeypatch):
+    _install_data_script_stubs(monkeypatch)
+    manager, session_dir = _build_manager(tmp_path)
+
+    result = manager.autolabel()
+
+    assert result["status"] == "ok"
+    assert (session_dir / "intent_dataset" / "metadata.jsonl").exists()
+    assert (session_dir / "intent_dataset" / "manifest.json").exists()
+
+
+def test_intent_download_after_autolabel_uses_train_ready_layout(tmp_path, monkeypatch):
+    _install_data_script_stubs(monkeypatch)
+    manager, _session_dir = _build_manager(tmp_path)
+    manager.autolabel()
+
+    zip_path, session_id = manager.build_zip()
+
+    with zipfile.ZipFile(zip_path) as archive:
+        names = set(archive.namelist())
+
+    assert f"{session_id}/raw/roi_t1_f000001.jpg" in names
+    assert f"{session_id}/raw/metadata.jsonl" in names
+    assert f"{session_id}/intent_dataset/stationary/" in names
+    assert f"{session_id}/intent_dataset/approaching/" in names
+    assert f"{session_id}/intent_dataset/departing/" in names
+    assert f"{session_id}/intent_dataset/crossing/" in names
+    assert f"{session_id}/intent_dataset/erratic/" in names
+    assert f"{session_id}/intent_dataset/uncertain/" in names
     assert f"{session_id}/intent_dataset/metadata.jsonl" in names
+    assert f"{session_id}/intent_dataset/reports/exploration_1.json" in names
     assert f"{session_id}/intent_dataset/manifest.json" in names
     assert f"{session_id}/manifest.json" in names
