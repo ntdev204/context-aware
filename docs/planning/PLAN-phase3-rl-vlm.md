@@ -204,8 +204,8 @@ training/reward_shaping.py    (NEW)
   | APPROACHING | -0.3    | Moderate — robot should slow       |
   | DEPARTING   | +0.2    | Positive — person moving away      |
   | CROSSING    | -0.6    | High risk — robot should stop/wait |
-  | FOLLOWING   | 0.0     | Neutral                            |
   | ERRATIC     | -0.8    | Highest risk — unpredictable       |
+  | UNCERTAIN   | -0.2    | Abstain / needs review             |
 
   #### 3.3 Implementation
 

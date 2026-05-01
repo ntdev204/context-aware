@@ -18,7 +18,8 @@ MIN_TOTAL_IMAGES = 500
 MIN_CLASS_IMAGES = 50
 MAX_IMBALANCE_RATIO = 10.0
 MAX_DUPLICATE_PCT = 5.0
-IGNORED_CLASSES = {"UNCERTAIN", "uncertain"}
+TRAINABLE_CLASSES = {"STATIONARY", "APPROACHING", "DEPARTING", "CROSSING", "ERRATIC"}
+IGNORED_CLASSES = {"UNCERTAIN", "uncertain", "FOLLOW", "FOLLOWING"}
 
 
 def _remove_bad_files(files_meta: list[dict]):
@@ -56,12 +57,31 @@ def validate(report_path: Path) -> int:
     # 2. Block checks. Training ignores UNCERTAIN samples, so quality gates
     # must use trainable images only.
     raw_classes = report.get("classes", {})
-    classes = {name: count for name, count in raw_classes.items() if name not in IGNORED_CLASSES}
+    classes = {
+        str(name).upper(): count
+        for name, count in raw_classes.items()
+        if str(name).upper() in TRAINABLE_CLASSES
+    }
     total = sum(classes.values())
-    ignored_total = sum(count for name, count in raw_classes.items() if name in IGNORED_CLASSES)
+    ignored_total = sum(
+        count for name, count in raw_classes.items() if str(name).upper() in IGNORED_CLASSES
+    )
 
     if ignored_total:
-        print(f"[*] Ignoring {ignored_total} UNCERTAIN images for training gates.")
+        print(f"[*] Ignoring {ignored_total} UNCERTAIN/legacy FOLLOW images for training gates.")
+
+    if "review_pending_by_class" not in report:
+        print("[!] WARNING: Report predates review-gate fields. Re-run explore_roi.py first.")
+
+    pending_review = report.get("review_pending_by_class", {})
+    erratic_pending = int(pending_review.get("ERRATIC", 0))
+    if erratic_pending:
+        print(f"[❌] BLOCKED: {erratic_pending} ERRATIC samples still need human review.")
+        status = 1
+
+    uncertain_pending = int(pending_review.get("UNCERTAIN", 0))
+    if uncertain_pending:
+        print(f"[*] Review queue: {uncertain_pending} UNCERTAIN samples pending; excluded from training.")
 
     if total < MIN_TOTAL_IMAGES:
         print(f"[❌] BLOCKED: Trainable images ({total}) < required ({MIN_TOTAL_IMAGES})")

@@ -230,7 +230,7 @@ curl -X POST http://100.104.204.128:8080/control/stop
 
 ### Set mode override
 
-Valid modes: `STOP`, `CRUISE`, `CAUTIOUS`, `AVOID`, `FOLLOW`
+Valid modes: `STOP`, `CRUISE`, `CAUTIOUS`, `AVOID`
 
 ```bash
 curl -X POST http://100.104.204.128:8080/control/mode/CAUTIOUS

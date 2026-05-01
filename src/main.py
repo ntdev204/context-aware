@@ -181,6 +181,10 @@ def _build_pipeline(cfg) -> dict:
         model_path=per_cfg.get("cnn_intent.model_path", None),
         use_tensorrt=per_cfg.get("cnn_intent.use_tensorrt", False),
         max_batch_size=per_cfg.get("cnn_intent.max_batch_size", 5),
+        temporal_window=per_cfg.get("cnn_intent.temporal_window", 15),
+        confidence_threshold=per_cfg.get("cnn_intent.confidence_threshold", 0.55),
+        margin_threshold=per_cfg.get("cnn_intent.margin_threshold", 0.12),
+        temperature=per_cfg.get("cnn_intent.temperature", 1.0),
     )
 
     context_builder = ContextBuilder(

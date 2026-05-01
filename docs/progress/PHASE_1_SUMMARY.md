@@ -44,7 +44,7 @@
 
 - Phân tách dứt điểm logic dán nhãn bằng `autolabel.py` qua thuật toán cửa sổ trượt (Sliding Window N=5).
 - **Robot Ego-Motion Compensation:** Áp dụng thuật toán bù trừ tịnh tiến và góc xoay (`vx`, `vy`, `vtheta`) từ robot trước khi lấy hiệu số `delta_depth`. Tránh false-positive nhãn `APPROACHING` do góc nhìn tương đối.
-- Cập nhật luồng Core `ExperienceBuffer`: Gắn thêm tọa độ ngang viền đối tượng `cx, cy` và định danh chuỗi `track_id` vào dữ liệu HDF5 và JSON dự phòng, phục vụ đắc lực cho việc đoán ý định bằng Lateral Displacement. Giúp phân biệt hai nhãn khó là `CROSSING` và `FOLLOWING`.
+- Cập nhật luồng Core `ExperienceBuffer`: Gắn thêm tọa độ ngang viền đối tượng `cx, cy` và định danh chuỗi `track_id` vào dữ liệu HDF5 và JSON dự phòng, phục vụ đắc lực cho việc đoán ý định bằng Lateral Displacement. Nhãn residual cũ được chuyển sang `UNCERTAIN` để review, không còn dùng `FOLLOWING`.
 - Tách nhãn `ERRATIC` phân bổ bằng phương sai (`variance`) thay vì Auto-label ngầm định nhằm kiểm soát Review.
 - **Quality Gate:** Đưa logic kiểm tra ngưỡng cân bằng vào script `explore_roi.py`. Bật cảnh báo đa dạng dữ liệu `< 35%` nếu nhóm 3 class khó tổng cộng quá ít, bảo đảm an toàn dữ liệu Huấn luyện CNN.
 

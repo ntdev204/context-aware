@@ -1,4 +1,4 @@
-# Context-Aware AI Navigation System 🤖
+# Context-Aware AI Navigation System
 
 ![CI Status](https://github.com/ntdev204/context-aware/actions/workflows/ci.yml/badge.svg)
 ![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)
@@ -15,7 +15,7 @@ The project is structured into modular components to ensure low-latency processi
 - **Perception Layer**:
   - **YOLO Detection**: Object detection using COCO classes with depth-aware obstacle mapping.
   - **Fallback Tracker**: IoU-based multi-object tracking for stable track identity.
-  - **Intent CNN**: Predicts human movement intent (STATIONARY, ERRATIC, TOWARDS, etc.) from extracted ROIs.
+  - **Temporal Intent CNN**: Predicts human movement intent from per-track ROI sequences. Trainable labels are STATIONARY, APPROACHING, DEPARTING, CROSSING, and ERRATIC; UNCERTAIN is an abstain/review label.
 - **Decision Layer**:
   - **Context Builder**: Aggregates sensor data, detections, and intent and builds a unified world state.
   - **Navigation Policy**: Heuristic-based navigation with dynamic safety monitoring.
@@ -65,6 +65,20 @@ All experimental data is structured and logged into the `research_data/` directo
 - **Analysis Scripts**: See `scripts/data/` for data exploration and validation tools.
 - **Syncing**: Automated background sync to remote research servers via `rsync`.
 
+### Phase-2 Intent Dataset Gate
+
+Before exporting an intent model, build and validate the dataset:
+
+```bash
+python scripts/data/explore_roi.py --dataset intent_dataset --output intent_dataset
+python scripts/data/validate_dataset.py intent_dataset/reports/<latest>.json
+python scripts/data/build_intent_manifest.py --dataset intent_dataset --temporal-window 15
+python scripts/train/train_intent_cnn.py --dataset intent_dataset --temporal-window 15
+python scripts/deploy/export_intent_model.py --checkpoint models/cnn_intent/intent_v1.pt
+```
+
+`FOLLOW`/`FOLLOWING` is intentionally removed. Ambiguous residual motion is `UNCERTAIN`, and `UNCERTAIN` plus `ERRATIC` are routed to human review before controlled continual learning.
+
 ---
 
 ## 🛠 Project Structure
@@ -89,4 +103,4 @@ This project is part of an ongoing research on **Context-Aware Navigation for Mo
 For academic inquiries or citation, please refer to the `research_data/README.md`.
 
 ---
-*Created with ❤️ by the Context-Aware AI Team.*
+*Created by the Context-Aware AI Team.*

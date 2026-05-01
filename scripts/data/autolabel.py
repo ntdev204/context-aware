@@ -16,6 +16,30 @@ from typing import Any
 
 import numpy as np
 
+ROOT = Path(__file__).resolve().parents[2]
+try:
+    import sys
+
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from src.perception.intent_labels import INTENT_NAMES, canonical_label, needs_human_review
+except Exception:  # pragma: no cover - keep standalone script runnable
+    INTENT_NAMES = [
+        "STATIONARY",
+        "APPROACHING",
+        "DEPARTING",
+        "CROSSING",
+        "ERRATIC",
+        "UNCERTAIN",
+    ]
+
+    def canonical_label(label: str | None) -> str:
+        label_up = str(label or "UNCERTAIN").strip().upper()
+        return "UNCERTAIN" if label_up in {"FOLLOW", "FOLLOWING"} else label_up
+
+    def needs_human_review(label: str | None) -> bool:
+        return canonical_label(label) in {"UNCERTAIN", "ERRATIC"}
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -34,15 +58,7 @@ STAT_CX_THRESHOLD = 20       # px/s
 ERRATIC_VAR_THRESHOLD = 25000  # (mm/s)^2 variance
 
 WINDOW_SIZE = 5
-LABELS = (
-    "STATIONARY",
-    "APPROACHING",
-    "DEPARTING",
-    "CROSSING",
-    "FOLLOWING",
-    "ERRATIC",
-    "UNCERTAIN",
-)
+LABELS = tuple(INTENT_NAMES)
 
 
 def _empty_stats() -> dict[str, int]:
@@ -120,7 +136,7 @@ def _write_labeled_sample(row: dict[str, Any], out_dir: Path) -> bool:
     if not isinstance(src_path, Path) or not src_path.exists():
         return False
 
-    label = str(row["label"]).upper()
+    label = canonical_label(row["label"])
     dest_dir = out_dir / label
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -138,6 +154,13 @@ def _write_labeled_sample(row: dict[str, Any], out_dir: Path) -> bool:
             "file": f"{label}/{dest_name}",
             "source_file": row.get("file", src_path.name),
             "label": label,
+            "label_source": row.get("label_source", "heuristic"),
+            "review_status": row.get(
+                "review_status",
+                "needs_review" if needs_human_review(label) else "auto_accepted",
+            ),
+            "review_required": bool(needs_human_review(label)),
+            "sequence_window": WINDOW_SIZE,
             "track_uid": row.get("_track_uid"),
             "d_depth": round(float(row.get("d_depth", 0.0)), 4),
             "d_cx": round(float(row.get("d_cx", 0.0)), 4),
@@ -148,6 +171,24 @@ def _write_labeled_sample(row: dict[str, Any], out_dir: Path) -> bool:
 
     with open(out_dir / "metadata.jsonl", "a", encoding="utf-8") as jf:
         jf.write(json.dumps(meta, ensure_ascii=False) + "\n")
+
+    if needs_human_review(label):
+        review_dir = out_dir / "review_queue" / label
+        review_dir.mkdir(parents=True, exist_ok=True)
+        review_path = review_dir / dest_name
+        if not review_path.exists():
+            shutil.copy2(dest_path, review_path)
+            review_ref = {
+                "file": f"review_queue/{label}/{dest_name}",
+                "dataset_file": f"{label}/{dest_name}",
+                "label": label,
+                "track_uid": row.get("_track_uid"),
+                "frame_id": row.get("frame_id", 0),
+                "reason": "low_certainty" if label == "UNCERTAIN" else "erratic_candidate",
+                "review_status": "needs_review",
+            }
+            with open(out_dir / "review_queue" / "metadata.jsonl", "a", encoding="utf-8") as jf:
+                jf.write(json.dumps(review_ref, ensure_ascii=False) + "\n")
     return True
 
 
@@ -158,7 +199,7 @@ def process_track(track_id: str, frames: list[dict[str, Any]], out_dir: Path) ->
     frames.sort(key=lambda x: x["ts"])
 
     if len(frames) < WINDOW_SIZE:
-        logger.debug(f"Track {track_id} too short ({len(frames)} frames), skipping.")
+        logger.debug("Track %s too short (%d frames), skipping.", track_id, len(frames))
         stats["short_track_skipped"] += len(frames)
         return stats
     # Build per-frame delta features
@@ -196,11 +237,12 @@ def process_track(track_id: str, frames: list[dict[str, Any]], out_dir: Path) ->
                 dt, delta_depth_raw, delta_cx_raw, curr["cx"], vx, vy, vtheta, frame_w
             )
         else:
-            # Bbox-height proxy: normalised [0,1] difference → convert to mm/s via
-            # a rough scale (1 unit ≈ distance at which bbox fills full frame height).
-            # Keep on separate label path — never mixed with real mm values below.
+            # Bbox-height proxy: normalized [0,1] difference projected into a
+            # heuristic depth-like scale for fallback labeling only. This is
+            # not physically comparable to sensor mm/s and should be treated
+            # as lower-confidence metadata when bbox_depth_delta=True.
             bbox_delta = _bbox_distance_proxy(prev) - _bbox_distance_proxy(curr)
-            d_depth = (bbox_delta / dt) * 1000.0  # rough mm/s proxy (same scale as threshold)
+            d_depth = (bbox_delta / dt) * 1000.0  # heuristic proxy, not true mm/s
             vtheta = curr.get("vtheta", 0.0)
             fx = FOCAL_LENGTH_PX * (frame_w / CAMERA_W)
             robot_cx_contrib = fx * vtheta * dt
@@ -250,18 +292,22 @@ def process_track(track_id: str, frames: list[dict[str, Any]], out_dir: Path) ->
             elif abs(mean_delta_depth) < STATIONARY_THRESHOLD and mean_delta_cx < STAT_CX_THRESHOLD:
                 label = "STATIONARY"
             else:
-                label = "FOLLOWING"  # residual class
+                # No FOLLOW/FOLLOWING class in the current system. Ambiguous
+                # residual motion is held for review instead of becoming a
+                # trainable label.
+                label = "UNCERTAIN"
         else:
             # Depth unavailable — only lateral-motion rules are valid.
             if mean_delta_cx > CROSSING_THRESHOLD:
                 label = "CROSSING"
-            # STATIONARY/FOLLOWING cannot be confirmed without depth — leave as UNCERTAIN.
+            # STATIONARY cannot be confirmed without depth — leave as UNCERTAIN.
 
         frames[i]["label"] = label
 
     # Save to output directories based on label and persist sidecar metadata.
     for f in frames[WINDOW_SIZE - 1 :]:
-        label = f["label"]
+        label = canonical_label(f["label"])
+        f["label"] = label
         if _write_labeled_sample(f, out_dir):
             stats[label] += 1
 

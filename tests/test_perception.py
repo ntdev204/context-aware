@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from src.perception.ground_segmenter import GroundSegmenter
 from src.perception.intent_cnn import (
     ERRATIC,
     STATIONARY,
+    UNCERTAIN,
     IntentCNN,
+    _calibrate_or_abstain,
 )
 from src.perception.roi_extractor import CNN_INPUT_H, CNN_INPUT_W, ROIExtractor
 from src.perception.tracker import Tracker, _FallbackTracker
@@ -448,4 +451,28 @@ class TestIntentCNN:
 
         assert len(INTENT_NAMES) == 6
         assert INTENT_NAMES[ERRATIC] == "ERRATIC"
+        assert INTENT_NAMES[UNCERTAIN] == "UNCERTAIN"
         assert INTENT_NAMES[STATIONARY] == "STATIONARY"
+
+    def test_low_confidence_abstains_as_uncertain(self):
+        probs, cls, conf, review_required = _calibrate_or_abstain(
+            np.array([0.25, 0.23, 0.20, 0.17, 0.15], dtype=np.float32),
+            confidence_threshold=0.55,
+            margin_threshold=0.12,
+        )
+        assert cls == UNCERTAIN
+        assert probs[UNCERTAIN] == 1.0
+        assert conf == 0.0
+        assert review_required
+
+    def test_temporal_model_rejects_snapshot_tensor_api(self):
+        pytest.importorskip("torch")
+        cnn = IntentCNN(model_path=None, device="cpu")
+        cnn._torch_device = "cpu"
+        cnn._dtype = None
+        cnn._build_model()
+
+        import torch
+
+        with pytest.raises(ValueError, match="Temporal API requires input shape"):
+            cnn._model(torch.zeros(2, 3, 256, 128))

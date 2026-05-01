@@ -88,7 +88,6 @@ def process_archive(
             "APPROACHING",
             "DEPARTING",
             "CROSSING",
-            "FOLLOWING",
             "ERRATIC",
             "UNCERTAIN",
         )
@@ -152,9 +151,26 @@ def _run_orchestration_pipeline(dataset_dir: Path, cfg: dict) -> None:
         logger.warning("[Orchestrator] Pipeline BLOCKED by validation. Skipping training.")
         return
 
-    # 3. FINE-TUNE
+    # 3. MANIFEST
+    manifest_cmd = [
+        sys.executable,
+        "scripts/data/build_intent_manifest.py",
+        "--dataset",
+        str(dataset_dir),
+        "--temporal-window",
+        str(cfg.get("temporal_window", 15)),
+    ]
+    manifest_result = subprocess.run(manifest_cmd, capture_output=True, text=True)
+    for line in manifest_result.stdout.strip().split("\n"):
+        if line:
+            logger.info("  %s", line)
+    if manifest_result.returncode != 0:
+        logger.error("[Orchestrator] Manifest generation failed.")
+        return
+
+    # 4. FINE-TUNE
     epochs = cfg.get("epochs_per_finetune", 10)
-    logger.info("[Orchestrator] 3/3: Fine-tuning (epochs=%d)...", epochs)
+    logger.info("[Orchestrator] 4/4: Fine-tuning (epochs=%d)...", epochs)
 
     model_dir = Path("models/cnn_intent")
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -175,6 +191,12 @@ def _run_orchestration_pipeline(dataset_dir: Path, cfg: dict) -> None:
         str(cfg.get("replay_buffer_size", 2000)),
         "--ewc-lambda",
         str(cfg.get("ewc_lambda", 5000)),
+        "--temporal-window",
+        str(cfg.get("temporal_window", 15)),
+        "--confidence-threshold",
+        str(cfg.get("confidence_threshold", 0.55)),
+        "--margin-threshold",
+        str(cfg.get("margin_threshold", 0.12)),
     ]
 
     if model_path.exists():
@@ -321,6 +343,8 @@ def main() -> None:
     logger.info("ROI Auto-Watcher | watch=%s", watch_dir)
     logger.info("  Output: %s", output_dir)
     logger.info("  Labeling thresholds managed internally by autolabel.py")
+    if args.threshold != 30 or args.lookahead != 15:
+        logger.warning("--threshold and --lookahead are deprecated and have no effect.")
 
     # Load training config
     training_yaml = Path("config/training.yaml")

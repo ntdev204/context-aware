@@ -52,10 +52,14 @@ perception:
     model_path: null
     use_tensorrt: false
     max_batch_size: 5
+    temporal_window: 15
+    confidence_threshold: 0.55
+    margin_threshold: 0.12
+    temperature: 1.0
 
 context:
-  temporal_stack_size: 1
-  state_version: "v2-camera"
+  temporal_stack_size: 3
+  state_version: "v2-temporal-roi-k15"
   observation_dim: 114
   occupancy_grid_size: 8
 

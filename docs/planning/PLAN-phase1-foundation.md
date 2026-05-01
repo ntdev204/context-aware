@@ -137,15 +137,15 @@ src/perception/roi_extractor.py
   - Batch inference: tối đa 5 persons cùng lúc
   - TensorRT `.engine` (FP16) hoặc PyTorch fallback
 
-**Intent Classes** (6):
+**Intent Classes** (runtime 6 slots; 5 trainable + abstain):
 | ID | Intent | Description |
 |----|--------|-------------|
 | 0 | STATIONARY | Người đứng yên |
 | 1 | APPROACHING | Người đi tới robot |
 | 2 | DEPARTING | Người đi xa robot |
 | 3 | CROSSING | Người cắt ngang |
-| 4 | FOLLOWING | Người đi theo robot |
-| 5 | ERRATIC | Chuyển động bất thường |
+| 4 | ERRATIC | Chuyển động bất thường |
+| 5 | UNCERTAIN | Abstain / cần review |
 
 > **NOTE**: Phase 1 chưa có trained CNN weights → dùng pretrained MobileNetV3 + random heads (for pipeline testing). Training CNN thực sự ở Phase 2 sau khi có data.
 
@@ -204,8 +204,6 @@ src/navigation/context_builder.py
       mode = STOP, velocity = 0.0
   elif person crossing path:
       mode = AVOID, velocity = 0.3, heading_offset = avoid_direction
-  elif follow command active:
-      mode = FOLLOW, velocity = 0.5, heading = toward_target
   ```
 
 - [ ] `src/navigation/nav_command.py`

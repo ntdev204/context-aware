@@ -121,7 +121,7 @@ Each batch archive also contains `metadata.jsonl` — one JSON object per image:
 ```
 The sidecar stores `bbox_w/h` and other fields that exceed filename length limits, and is the primary source for depth-aware auto-labeling.
 
-### 6-Class Label Mapping
+### Runtime Label Mapping
 
 | Class | ID | Auto-label signal |
 |---|---|---|
@@ -129,9 +129,8 @@ The sidecar stores `bbox_w/h` and other fields that exceed filename length limit
 | **APPROACHING** | 1 | `dist[t+N] - dist[t] < -200mm` |
 | **DEPARTING** | 2 | `dist[t+N] - dist[t] > +200mm` |
 | **CROSSING** | 3 | `abs(Δcx) > threshold AND abs(Δdist) < 150mm` |
-| **FOLLOWING** | 4 | dist stable + cx stable (ego-motion assumed) |
-| **ERRATIC** | 5 | `≥ 3 sign changes` in cx direction over lookahead window |
-| **uncertain** | — | Skipped — not included in training |
+| **ERRATIC** | 4 | high variance/sign changes; requires human review |
+| **UNCERTAIN** | 5 | abstain; skipped unless manually relabeled |
 
 ### Logging (Production)
 

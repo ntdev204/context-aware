@@ -38,6 +38,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
+from .. import __version__
 from .state import VALID_MODE_OVERRIDES, ServerState
 
 log = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ class DatasetStartRequest(BaseModel):
 def create_app(state: ServerState) -> FastAPI:
     app = FastAPI(
         title="Context-Aware AI Server",
-        version="1.0.0",
+        version=__version__,
         description="Edge API for real-time monitoring and control of the Mecanum robot AI server.",
     )
 
