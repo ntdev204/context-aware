@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import threading
 import time
 import uuid
@@ -114,9 +113,12 @@ class DatasetManager:
             raise ValueError("Dataset session has no frames")
 
         root = self._session_root(status)
+        if status.get("dataset_mode") == DATASET_INTENT and hasattr(self.roi_saver, "_finalize_session"):
+            self.roi_saver._finalize_session()
+            status = self.status()
         saved_status = dict(status)
         saved_status["saved"] = True
-        saved_status["dataset_stage"] = "raw_review"
+        saved_status["dataset_stage"] = "raw_sequences"
         self._write_manifest(root, saved_status)
         return self.status()
 
@@ -139,7 +141,7 @@ class DatasetManager:
                     if not file_name or not frame_path.is_file():
                         raise FileNotFoundError("Intent preview frame not found")
                     return frame_path
-                frames = sorted(session_dir.glob("*.jpg"))
+                frames = sorted(session_dir.glob("session_*/track_*/frames/*.jpg"))
                 if index < 0 or index >= len(frames):
                     raise FileNotFoundError("Intent preview frame not found")
                 return frames[index]
@@ -165,7 +167,10 @@ class DatasetManager:
             zip_path.unlink()
 
         if status.get("dataset_mode") == DATASET_INTENT:
-            self._write_manifest(root, {**status, "saved": True, "dataset_stage": "raw_review"})
+            if hasattr(self.roi_saver, "_finalize_session"):
+                self.roi_saver._finalize_session()
+                status = self.status()
+            self._write_manifest(root, {**status, "saved": True, "dataset_stage": "raw_sequences"})
         else:
             self._write_manifest(root, status)
 
@@ -200,22 +205,37 @@ class DatasetManager:
         root = self._session_root(status)
         rows = self._load_metadata_rows(root)
         images = []
-        for original_index, row in enumerate(rows):
-            file_name = str(row.get("file") or "")
-            path = root / file_name
-            if not file_name or not path.is_file():
-                continue
-            images.append(
-                {
-                    "index": original_index,
-                    "file": file_name,
-                    "session_id": status.get("session_id"),
-                    "frame_id": row.get("frame_id"),
-                    "track_id": row.get("track_uid") or row.get("tid") or row.get("track_id"),
-                    "timestamp": row.get("ts"),
-                    "metadata": row,
-                }
-            )
+        if rows:
+            for original_index, row in enumerate(rows):
+                file_name = str(row.get("file") or "")
+                path = root / file_name
+                if not file_name or not path.is_file():
+                    continue
+                images.append(
+                    {
+                        "index": original_index,
+                        "file": file_name,
+                        "session_id": status.get("session_id"),
+                        "frame_id": row.get("frame_id"),
+                        "track_id": row.get("track_uid") or row.get("tid") or row.get("track_id"),
+                        "timestamp": row.get("ts"),
+                        "metadata": row,
+                    }
+                )
+        else:
+            for original_index, frame in enumerate(sorted(root.glob("session_*/track_*/frames/*.jpg"))):
+                meta = self._read_manifest(frame.parent.parent)
+                images.append(
+                    {
+                        "index": original_index,
+                        "file": str(frame.relative_to(root)),
+                        "session_id": meta.get("session_id") or status.get("session_id"),
+                        "frame_id": None,
+                        "track_id": meta.get("track_id") or frame.parent.parent.name,
+                        "timestamp": None,
+                        "metadata": meta,
+                    }
+                )
 
         return {
             "status": status.get("status"),
@@ -248,67 +268,14 @@ class DatasetManager:
         self._write_metadata_rows(root, remaining)
         self._write_manifest(
             root,
-            {**self.status(), "saved": True, "dataset_stage": "raw_review"},
+            {**self.status(), "saved": True, "dataset_stage": "raw_sequences"},
         )
         return self.list_images()
 
     def autolabel(self) -> dict[str, Any]:
-        status = self.status()
-        if status.get("status") == "recording":
-            raise ValueError("Stop collection before auto-labeling")
-        if status.get("dataset_mode") != DATASET_INTENT:
-            raise ValueError("Auto-label is only available for intent ROI sessions")
-        if int(status.get("frame_count") or 0) <= 0:
-            raise ValueError("Dataset session has no frames")
-
-        raw_session_dir = self._session_root(status)
-        labeled_dir = raw_session_dir / "intent_dataset"
-        if labeled_dir.exists():
-            shutil.rmtree(labeled_dir)
-        labeled_dir.mkdir(parents=True, exist_ok=True)
-
-        report_path = ""
-        validation_status: int | None = None
-        manifest: dict[str, Any] | None = None
-        error: str | None = None
-
-        try:
-            from scripts.data.autolabel import run_autolabel
-            from scripts.data.build_intent_manifest import build_manifest
-            from scripts.data.explore_roi import DatasetExplorer
-            from scripts.data.validate_dataset import validate
-
-            run_autolabel(raw_session_dir, labeled_dir)
-            report_path = DatasetExplorer(labeled_dir, labeled_dir).run()
-            if report_path:
-                validation_status = validate(Path(report_path))
-            manifest = build_manifest(labeled_dir, temporal_window=15)
-            manifest["validation_status"] = validation_status
-            with open(labeled_dir / "manifest.json", "w", encoding="utf-8") as handle:
-                json.dump(manifest, handle, indent=2)
-        except Exception as exc:
-            error = str(exc)
-
-        result = {
-            "status": "error" if error else "ok",
-            "session_id": status.get("session_id"),
-            "raw_dir": str(raw_session_dir),
-            "train_dataset_dir": str(labeled_dir),
-            "report_path": report_path,
-            "validation_status": validation_status,
-            "ready_for_phase2_training": bool(
-                manifest.get("ready_for_phase2_training") if manifest else False
-            ),
-            "error": error,
-        }
-        stage_status = {
-            **status,
-            "saved": True,
-            "dataset_stage": "auto_labeled" if error is None else "auto_label_failed",
-            "autolabel_result": result,
-        }
-        self._write_manifest(raw_session_dir, stage_status)
-        return result
+        raise ValueError(
+            "Jetson auto-label is disabled. Download the raw sequence dataset and upload it to the server Dataset page."
+        )
 
     def _normalize_mode(self, mode: str) -> str:
         mode = (mode or "").strip().lower()
@@ -436,7 +403,7 @@ class DatasetManager:
         return None
 
     def _write_manifest(self, root: Path, status: dict[str, Any]) -> None:
-        manifest = dict(status)
+        manifest = {**self._read_manifest(root), **status}
         manifest["created_at"] = time.time()
         (root / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -447,24 +414,18 @@ class DatasetManager:
         session_id: str,
     ) -> None:
         session_root = Path(session_id)
-        raw_root = session_root / "raw"
-        labeled_root = session_root / "intent_dataset"
-
-        for path in sorted(root.iterdir()):
-            if path.is_file() and (path.suffix.lower() in {".jpg", ".jpeg"} or path.name == "metadata.jsonl"):
-                archive.write(path, raw_root / path.name)
+        for path in sorted(root.rglob("*")):
+            if path.is_file() and "intent_dataset" not in path.parts:
+                archive.write(path, session_root / path.relative_to(root))
 
         labeled_dir = root / "intent_dataset"
         if labeled_dir.exists():
+            labeled_root = session_root / "intent_dataset"
             for label in INTENT_LABEL_DIRS:
                 archive.writestr(str(labeled_root / label) + "/", "")
             for path in sorted(labeled_dir.rglob("*")):
                 if path.is_file():
                     archive.write(path, labeled_root / path.relative_to(labeled_dir))
-
-        manifest_path = root / "manifest.json"
-        if manifest_path.exists():
-            archive.write(manifest_path, session_root / "manifest.json")
 
     def _read_manifest(self, root: Path) -> dict[str, Any]:
         manifest_path = root / "manifest.json"

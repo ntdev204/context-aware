@@ -1,28 +1,18 @@
-"""ROISaver — saves person-crop JPGs + sidecar metadata.jsonl for auto-labelling.
+"""Raw track sequence saver for dataset collection.
 
-Each saved ROI produces:
-  roi_t{track_id}_f{frame_id:06d}.jpg   — 128×256 BGR crop (clean, no bbox overlay)
-  metadata.jsonl                         — one JSON line per saved ROI
+The class keeps the historical ROISaver name because the pipeline already
+depends on it, but the artifact is no longer image-level ROI metadata. During
+collection it buffers frames per track, and when collection stops it flushes
+valid segments into:
 
-metadata.jsonl schema (one object per line):
-  {
-    "file":    "roi_t1_f000042.jpg",
-    "frame_id": 42,
-    "session_id": "20260430_120000_abcd1234",
-    "tid":     1,
-    "ts":      1714500000123,   # wall-clock ms since epoch
-    "cx":      320.5,           # bbox centre x in original frame pixels
-    "cy":      240.1,           # bbox centre y in original frame pixels
-    "bw":      80,              # bbox width in original frame pixels
-    "bh":      180,             # bbox height in original frame pixels
-    "frame_w": 640,
-    "frame_h": 480,
-    "distance_estimate": 0.625, # bbox-height proxy [0, 1]
-    "dist_mm": 1850,            # sensor depth in mm  (0 = unknown)
-    "vx":      0.30,            # robot linear-x m/s
-    "vy":      0.00,            # robot linear-y m/s
-    "vtheta":  -0.05            # robot angular-z rad/s
-  }
+dataset/
+  session_001/
+    track_0001/
+      frames/0001.jpg ...
+      meta.json
+
+No label.json is written on Jetson. Labeling happens on the server after the
+raw dataset zip is uploaded.
 """
 
 from __future__ import annotations
@@ -36,6 +26,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
@@ -44,27 +35,29 @@ from ..perception.roi_extractor import PersonROI
 
 logger = logging.getLogger(__name__)
 
+MIN_SEQUENCE_FRAMES = 15
+MAX_SEQUENCE_FRAMES = 30
+MAX_TRACK_GAP_FRAMES = 45
+
 
 @dataclass
 class ROISaveRecord:
-    """Bundles everything needed to write one ROI entry to disk."""
-
     track_id: int
     frame_id: int
     session_dir: Path
-    image: np.ndarray        # 128×256 BGR, already cropped & resized
-    cx: float                # bbox centre-x in the original camera frame (pixels)
-    cy: float                # bbox centre-y in the original camera frame (pixels)
+    image: np.ndarray
+    cx: float
+    cy: float
     bw: int
     bh: int
     frame_w: int
     frame_h: int
     distance_estimate: float
-    dist_mm: float           # sensor depth in mm  (0 = unknown / depth not available)
-    timestamp_ms: float      # wall-clock timestamp in milliseconds
-    vx: float = 0.0          # robot forward velocity  (m/s)
-    vy: float = 0.0          # robot lateral velocity  (m/s)
-    vtheta: float = 0.0      # robot angular velocity  (rad/s)
+    dist_mm: float
+    timestamp_ms: float
+    vx: float = 0.0
+    vy: float = 0.0
+    vtheta: float = 0.0
 
 
 class ROISaver:
@@ -73,47 +66,44 @@ class ROISaver:
         self.save_dir = self.root_dir
         self.jpeg_quality = jpeg_quality
         self.root_dir.mkdir(parents=True, exist_ok=True)
-        self._queue: queue.Queue = queue.Queue(maxsize=200)
+        self._queue: queue.Queue[list[ROISaveRecord]] = queue.Queue(maxsize=400)
         self._running = False
         self._thread: threading.Thread | None = None
         self._collecting = False
         self._session_id = ""
         self._session_dir: Path | None = None
         self._saved_count = 0
+        self._sequence_count = 0
         self._started_at: float | None = None
         self._stopped_at: float | None = None
         self._state_lock = threading.Lock()
-        self._last_saved: dict[int, int] = {}  # track_id -> last saved frame_id
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
+        self._tracks: dict[int, list[ROISaveRecord]] = {}
+        self._track_names: dict[int, str] = {}
+        self._finalized = False
 
     def start(self) -> None:
+        if self._running:
+            return
         self._running = True
-        self._thread = threading.Thread(target=self._worker, daemon=True, name="roi-saver")
+        self._thread = threading.Thread(target=self._worker, daemon=True, name="track-sequence-saver")
         self._thread.start()
-        logger.info("ROISaver started → %s", self.save_dir)
+        logger.info("Track sequence saver started -> %s", self.save_dir)
 
     def stop(self) -> None:
+        self._wait_for_queue_idle(timeout=3.0)
         with self._state_lock:
             if self._collecting:
                 self._collecting = False
                 self._stopped_at = time.time()
-        self._wait_for_queue_idle(timeout=2.0)
+        self._finalize_session()
         self._running = False
         if self._thread:
             self._thread.join(timeout=2.0)
 
-    # ------------------------------------------------------------------
-    # Session management
-    # ------------------------------------------------------------------
-
-    def start_collection(self, session_id: str | None = None, clear_existing: bool = True) -> dict:
+    def start_collection(self, session_id: str | None = None, clear_existing: bool = True) -> dict[str, Any]:
         with self._state_lock:
             if self._collecting:
                 return self._status_locked()
-
             if clear_existing:
                 self._delete_session_dir_locked()
 
@@ -123,25 +113,33 @@ class ROISaver:
             self._session_dir.mkdir(parents=True, exist_ok=True)
             self.save_dir = self._session_dir
             self._saved_count = 0
+            self._sequence_count = 0
             self._started_at = time.time()
             self._stopped_at = None
             self._collecting = True
-            self._last_saved = {}
+            self._tracks = {}
+            self._track_names = {}
+            self._finalized = False
             self._drain_queue()
-            logger.info("ROI collection started: %s", self._session_dir)
+            logger.info("Track sequence collection started: %s", self._session_dir)
             return self._status_locked()
 
-    def stop_collection(self) -> dict:
+    def stop_collection(self) -> dict[str, Any]:
+        self._wait_for_queue_idle(timeout=3.0)
         with self._state_lock:
             if self._collecting:
                 self._collecting = False
                 self._stopped_at = time.time()
-                logger.info("ROI collection stopped: %s images", self._saved_count)
-        self._wait_for_queue_idle(timeout=2.0)
+        self._finalize_session()
         with self._state_lock:
+            logger.info(
+                "Track sequence collection stopped: %s frames, %s sequences",
+                self._saved_count,
+                self._sequence_count,
+            )
             return self._status_locked()
 
-    def discard_collection(self) -> dict:
+    def discard_collection(self) -> dict[str, Any]:
         with self._state_lock:
             session_id = self._session_id
             self._collecting = False
@@ -151,35 +149,25 @@ class ROISaver:
             self._session_dir = None
             self.save_dir = self.root_dir
             self._saved_count = 0
+            self._sequence_count = 0
             self._started_at = None
             self._stopped_at = None
-            self._last_saved = {}
+            self._tracks = {}
+            self._track_names = {}
+            self._finalized = False
             return {"status": "discarded", "session_id": session_id}
 
-    def status(self) -> dict:
+    def status(self) -> dict[str, Any]:
         with self._state_lock:
             return self._status_locked()
-
-    # ------------------------------------------------------------------
-    # Push
-    # ------------------------------------------------------------------
 
     def push(
         self,
         rois: list[PersonROI],
         frame_id: int,
-        robot_state=None,       # navigation.RobotState | None
+        robot_state=None,
         timestamp_ms: float | None = None,
     ) -> None:
-        """Queue ROIs for background saving.
-
-        Args:
-            rois:          Cropped person regions from this frame.
-            frame_id:      Monotonic frame counter from the inference loop.
-            robot_state:   Current RobotState (provides vx, vy, vtheta).
-                           Pass None when unavailable — velocities default to 0.
-            timestamp_ms:  Wall-clock time in milliseconds. Defaults to now.
-        """
         ts_ms = timestamp_ms if timestamp_ms is not None else time.time() * 1000.0
         vx = vy = vtheta = 0.0
         if robot_state is not None:
@@ -194,27 +182,22 @@ class ROISaver:
             if not self._running or not collecting or session_dir is None or not rois:
                 return
 
-            for r in rois:
-                last_f = self._last_saved.get(r.track_id, -999)
-                if frame_id - last_f < 15:           # throttle: max 2 fps @ 30fps camera
-                    continue
-                self._last_saved[r.track_id] = frame_id
-
-                x1, y1, x2, y2 = r.bbox
+            for roi in rois:
+                x1, y1, x2, y2 = roi.bbox
                 records.append(
                     ROISaveRecord(
-                        track_id=r.track_id,
+                        track_id=roi.track_id,
                         frame_id=frame_id,
                         session_dir=session_dir,
-                        image=r.image.copy(),
+                        image=roi.image.copy(),
                         cx=(x1 + x2) / 2.0,
                         cy=(y1 + y2) / 2.0,
                         bw=x2 - x1,
                         bh=y2 - y1,
-                        frame_w=r.frame_w,
-                        frame_h=r.frame_h,
-                        distance_estimate=r.distance_estimate,
-                        dist_mm=r.dist_mm,
+                        frame_w=roi.frame_w,
+                        frame_h=roi.frame_h,
+                        distance_estimate=roi.distance_estimate,
+                        dist_mm=roi.dist_mm,
                         timestamp_ms=ts_ms,
                         vx=vx,
                         vy=vy,
@@ -224,93 +207,130 @@ class ROISaver:
 
         if not records:
             return
-
         try:
             self._queue.put_nowait(records)
         except queue.Full:
-            pass  # drop silently — dataset collection is best-effort
-
-    # ------------------------------------------------------------------
-    # Worker
-    # ------------------------------------------------------------------
+            logger.debug("Track sequence saver queue full; dropping frame %s", frame_id)
 
     def _worker(self) -> None:
         while self._running:
             try:
-                records: list[ROISaveRecord] = self._queue.get(timeout=0.1)
+                records = self._queue.get(timeout=0.1)
             except queue.Empty:
                 continue
-
-            session_dir = records[0].session_dir
-
-            jsonl_path = session_dir / "metadata.jsonl"
-
             try:
-                with open(jsonl_path, "a", encoding="utf-8") as jf:
+                with self._state_lock:
+                    if self._session_dir is None or self._finalized:
+                        continue
                     for rec in records:
-                        filename = f"roi_t{rec.track_id}_f{rec.frame_id:06d}.jpg"
-                        filepath = session_dir / filename
-
-                        ok = cv2.imwrite(
-                            str(filepath),
-                            rec.image,
-                            [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality],
-                        )
-                        if not ok:
-                            logger.warning("ROISaver: imwrite failed for %s", filepath)
-                            continue
-
-                        meta = {
-                            "file": filename,
-                            "frame_id": rec.frame_id,
-                            "session_id": rec.session_dir.name,
-                            "tid": rec.track_id,
-                            "ts": int(rec.timestamp_ms),
-                            "cx": round(rec.cx, 1),
-                            "cy": round(rec.cy, 1),
-                            "bw": rec.bw,
-                            "bh": rec.bh,
-                            "frame_w": rec.frame_w,
-                            "frame_h": rec.frame_h,
-                            "distance_estimate": round(rec.distance_estimate, 4),
-                            "dist_mm": int(rec.dist_mm),
-                            "vx": round(rec.vx, 4),
-                            "vy": round(rec.vy, 4),
-                            "vtheta": round(rec.vtheta, 4),
-                        }
-                        jf.write(json.dumps(meta, ensure_ascii=False) + "\n")
-
-                        with self._state_lock:
-                            self._saved_count += 1
-
+                        self._tracks.setdefault(rec.track_id, []).append(rec)
+                        self._saved_count += 1
             except Exception as exc:
-                logger.error("ROISaver worker error: %s", exc)
+                logger.error("Track sequence saver worker error: %s", exc)
             finally:
                 self._queue.task_done()
 
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
+    def _finalize_session(self) -> None:
+        with self._state_lock:
+            if self._finalized or self._session_dir is None or not self._session_id:
+                return
+            session_dir = self._session_dir
+            session_id = self._session_id
+            tracks = {track_id: list(records) for track_id, records in self._tracks.items()}
+            started_at = self._started_at
+            stopped_at = self._stopped_at
+            self._finalized = True
 
-    def _status_locked(self) -> dict:
+        sequence_count = 0
+        frame_count = 0
+        rejected: list[dict[str, Any]] = []
+        session_name = "session_001"
+        session_root = session_dir / session_name
+        session_root.mkdir(parents=True, exist_ok=True)
+
+        for track_id, records in sorted(tracks.items()):
+            for segment in _split_track(records):
+                if len(segment) < MIN_SEQUENCE_FRAMES:
+                    rejected.append(
+                        {
+                            "track_id": track_id,
+                            "frame_count": len(segment),
+                            "reason": "too_short",
+                        }
+                    )
+                    continue
+                sequence_count += 1
+                track_name = f"track_{sequence_count:04d}"
+                track_dir = session_root / track_name
+                frames_dir = track_dir / "frames"
+                frames_dir.mkdir(parents=True, exist_ok=True)
+                frame_files: list[str] = []
+                for index, rec in enumerate(segment, start=1):
+                    filename = f"{index:04d}.jpg"
+                    frame_path = frames_dir / filename
+                    ok = cv2.imwrite(
+                        str(frame_path),
+                        rec.image,
+                        [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality],
+                    )
+                    if ok:
+                        frame_files.append(f"frames/{filename}")
+                meta = _build_meta(
+                    session_id=session_name,
+                    track_id=track_name,
+                    source_session_id=session_id,
+                    source_track_id=track_id,
+                    frame_files=frame_files,
+                    records=segment[: len(frame_files)],
+                )
+                (track_dir / "meta.json").write_text(
+                    json.dumps(meta, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                frame_count += len(frame_files)
+
+        manifest = {
+            "session_id": session_id,
+            "dataset_type": "track_sequence",
+            "schema": "track_sequence_v1",
+            "dataset_stage": "raw_sequences",
+            "started_at": started_at,
+            "stopped_at": stopped_at,
+            "saved": True,
+            "sequence_count": sequence_count,
+            "frame_count": frame_count,
+            "rejected_count": len(rejected),
+            "rejected": rejected[:200],
+        }
+        (session_dir / "manifest.json").write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        with self._state_lock:
+            self._sequence_count = sequence_count
+            self._saved_count = frame_count
+
+    def _status_locked(self) -> dict[str, Any]:
         if not self._session_id:
-            return {"status": "idle", "dataset_type": "roi"}
-        file_count = self._saved_count
+            return {"status": "idle", "dataset_type": "track_sequence"}
         bytes_total = 0
         if self._session_dir and self._session_dir.exists():
-            files = list(self._session_dir.glob("*.jpg"))
-            file_count = len(files)
-            bytes_total = sum(p.stat().st_size for p in files if p.is_file())
+            bytes_total = sum(p.stat().st_size for p in self._session_dir.rglob("*") if p.is_file())
+        buffered_count = self._saved_count
+        if self._collecting:
+            buffered_count = sum(len(records) for records in self._tracks.values())
         return {
             "status": "recording" if self._collecting else "stopped",
-            "dataset_type": "roi",
+            "dataset_type": "track_sequence",
             "session_id": self._session_id,
             "started_at": self._started_at,
             "stopped_at": self._stopped_at,
-            "frame_count": file_count,
+            "frame_count": buffered_count,
+            "sequence_count": self._sequence_count,
             "bytes_total": bytes_total,
-            "preview_count": min(file_count, 12),
-            "preview_indexes": list(range(min(file_count, 12))),
+            "preview_count": min(buffered_count, 12),
+            "preview_indexes": list(range(min(buffered_count, 12))),
         }
 
     def _delete_session_dir_locked(self) -> None:
@@ -329,3 +349,56 @@ class ROISaver:
         deadline = time.monotonic() + timeout
         while getattr(self._queue, "unfinished_tasks", 0) > 0 and time.monotonic() < deadline:
             time.sleep(0.01)
+
+
+def _split_track(records: list[ROISaveRecord]) -> list[list[ROISaveRecord]]:
+    if not records:
+        return []
+    ordered = sorted(records, key=lambda item: (item.frame_id, item.timestamp_ms))
+    chunks: list[list[ROISaveRecord]] = []
+    current: list[ROISaveRecord] = [ordered[0]]
+    for rec in ordered[1:]:
+        prev = current[-1]
+        if rec.frame_id - prev.frame_id > MAX_TRACK_GAP_FRAMES or len(current) >= MAX_SEQUENCE_FRAMES:
+            chunks.append(current)
+            current = [rec]
+        else:
+            current.append(rec)
+    chunks.append(current)
+    return chunks
+
+
+def _build_meta(
+    session_id: str,
+    track_id: str,
+    source_session_id: str,
+    source_track_id: int,
+    frame_files: list[str],
+    records: list[ROISaveRecord],
+) -> dict[str, Any]:
+    depth_valid = [rec.dist_mm > 0 for rec in records]
+    return {
+        "track_id": track_id,
+        "source_track_id": source_track_id,
+        "session_id": session_id,
+        "source_session_id": source_session_id,
+        "timestamps": [int(rec.timestamp_ms) for rec in records],
+        "frame_ids": [rec.frame_id for rec in records],
+        "frames": frame_files,
+        "dist_mm": [int(rec.dist_mm) for rec in records],
+        "cx": [round(rec.cx, 1) for rec in records],
+        "cy": [round(rec.cy, 1) for rec in records],
+        "bw": [int(rec.bw) for rec in records],
+        "bh": [int(rec.bh) for rec in records],
+        "vx": [round(rec.vx, 4) for rec in records],
+        "vy": [round(rec.vy, 4) for rec in records],
+        "vtheta": [round(rec.vtheta, 4) for rec in records],
+        "depth_valid_ratio": round(sum(depth_valid) / len(depth_valid), 4) if depth_valid else 0.0,
+        "frame_count": len(records),
+        "frame_w": records[0].frame_w if records else 0,
+        "frame_h": records[0].frame_h if records else 0,
+        "bbox_center_trajectory": [
+            {"cx": round(rec.cx, 1), "cy": round(rec.cy, 1)}
+            for rec in records
+        ],
+    }
