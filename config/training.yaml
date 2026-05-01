@@ -8,3 +8,15 @@ training:
   learning_rate: 1e-4 # Lower learning rate for fine-tuning to avoid catastrophic forgetting
   ewc_lambda: 5000 # Elastic Weight Consolidation regularization strength
   replay_buffer_size: 2000 # Number of past images to mix into each new training batch
+  temporal_window: 15 # Temporal CNN/TCN input length over ROI sequences
+  confidence_threshold: 0.55 # Below this, runtime abstains as UNCERTAIN
+  margin_threshold: 0.12 # Top-1/top-2 margin needed for non-UNCERTAIN intent
+  require_human_review:
+    - UNCERTAIN
+    - ERRATIC
+  trainable_intents:
+    - STATIONARY
+    - APPROACHING
+    - DEPARTING
+    - CROSSING
+    - ERRATIC

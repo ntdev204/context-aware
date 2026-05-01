@@ -1,6 +1,47 @@
 import argparse
+import json
 import shutil
+import time
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+try:
+    import sys
+
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from src.perception.intent_labels import canonical_label, is_trainable_label
+except Exception:  # pragma: no cover
+    def canonical_label(label: str | None) -> str:
+        label_up = str(label or "UNCERTAIN").strip().upper()
+        return "UNCERTAIN" if label_up in {"FOLLOW", "FOLLOWING"} else label_up
+
+    def is_trainable_label(label: str | None) -> bool:
+        return canonical_label(label) in {
+            "STATIONARY",
+            "APPROACHING",
+            "DEPARTING",
+            "CROSSING",
+            "ERRATIC",
+        }
+
+
+def _append_jsonl_line(path: Path, row: dict) -> None:
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    start = time.time()
+    while lock_path.exists():
+        if time.time() - start > 10.0:
+            raise TimeoutError(f"Timed out waiting for metadata lock: {lock_path}")
+        time.sleep(0.05)
+    lock_path.write_text(str(time.time()), encoding="utf-8")
+    try:
+        with open(path, "a", encoding="utf-8") as jf:
+            jf.write(json.dumps(row, ensure_ascii=False) + "\n")
+    finally:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def import_dataset(export_dir: Path, output_dir: Path) -> None:
@@ -49,13 +90,28 @@ def import_dataset(export_dir: Path, output_dir: Path) -> None:
             print(f"[!] Invalid class_id {class_id} in {txt_path.name}")
             continue
 
-        class_name = classes[class_id]
+        class_name = canonical_label(classes[class_id])
+        if not is_trainable_label(class_name):
+            print(f"[!] Skipping non-trainable label {classes[class_id]} in {txt_path.name}")
+            continue
 
         class_dir = output_dir / class_name
         class_dir.mkdir(exist_ok=True)
 
         dest_path = class_dir / f"human_{img_path.name}"
         shutil.copy2(img_path, dest_path)
+        _append_jsonl_line(
+            output_dir / "imported_metadata.jsonl",
+            {
+                "file": f"{class_name}/{dest_path.name}",
+                "source_file": img_path.name,
+                "label": class_name,
+                "label_source": "human",
+                "review_status": "human_verified",
+                "review_required": False,
+                "ts": int(time.time() * 1000),
+            },
+        )
         imported += 1
 
     print(f"[+] Successfully imported {imported} human-labeled images to: {output_dir}")

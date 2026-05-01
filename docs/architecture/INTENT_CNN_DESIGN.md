@@ -1,8 +1,10 @@
-# Intent CNN — Thiết Kế Kiến Trúc Mạng
+# Temporal Intent CNN — Thiết Kế Kiến Trúc Mạng
 
 > **Phạm vi:** Module `src/perception/intent_cnn.py` + `src/perception/roi_extractor.py`
-> **Cập nhật:** 2026-04-24
-> **Backend:** PyTorch · MobileNetV3-Small · FP16/CUDA (Jetson Orin)
+> **Cập nhật:** 2026-05-01
+> **Backend:** PyTorch · MobileNetV3-Small + TCN/Conv1D · FP16/CUDA (Jetson Orin)
+
+> **Quyết định hiện tại:** hệ thống đã loại bỏ cơ chế bám người. Vì vậy `FOLLOW`/`FOLLOWING` không còn là navigation mode hoặc intent class. Các mẫu mơ hồ được đưa vào `UNCERTAIN` và hàng đợi human review.
 
 ---
 
@@ -25,18 +27,18 @@ Mạng giải quyết bài toán: _"Robot có thể biết người đang địn
 
 ## 2. Phân Loại Ý Định (Intent Classes)
 
-Mạng phân loại người vào **6 nhãn** được định nghĩa trong `intent_cnn.py`:
+Mạng runtime xuất vector 6 slot, nhưng chỉ có **5 nhãn trainable**. Slot thứ 6 là abstain/review:
 
 ```python
 STATIONARY  = 0   # Đứng yên tại chỗ
 APPROACHING = 1   # Đang tiến về phía robot
 DEPARTING   = 2   # Đang rời xa robot
 CROSSING    = 3   # Đi ngang qua trường nhìn của robot
-FOLLOWING   = 4   # Đang đi theo hướng robot
-ERRATIC     = 5   # Hành vi bất thường / không đoán được
+ERRATIC     = 4   # Hành vi bất thường, cần review nếu sinh từ heuristic
+UNCERTAIN   = 5   # Abstain: thiếu chắc chắn, không train trực tiếp
 ```
 
-> **Lưu ý thiết kế:** `ERRATIC` là nhãn đặc biệt — không phải hành vi có thể học từ data thông thường. Nó được sinh ra bởi bộ auto-labeling khi variance vận tốc vượt ngưỡng, để đánh dấu mẫu cần con người kiểm tra.
+> **Lưu ý thiết kế:** `ERRATIC` và `UNCERTAIN` đi qua human-in-the-loop review. `UNCERTAIN` bị loại khỏi training; `ERRATIC` chỉ được train khi đã được xác nhận.
 
 ---
 
@@ -79,23 +81,26 @@ ERRATIC     = 5   # Hành vi bất thường / không đoán được
 │   ┌─────────────────────────────────────────────────────────────┐  │
 │   │              _IntentModel (PyTorch)                         │  │
 │   │                                                             │  │
-│   │  Input: (B, 3, 256, 128) — FP16 tensor trên CUDA           │  │
+│   │  Input: (B, T, 3, 256, 128) — T=15 ROI frames/track       │  │
 │   │                    │                                        │  │
 │   │           MobileNetV3-Small Backbone                        │  │
 │   │           (pretrained ImageNet, classifier=Identity)        │  │
 │   │                    │                                        │  │
-│   │           AdaptiveAvgPool2d(1) → flatten                    │  │
-│   │           Output: (B, 576)                                  │  │
+│   │           AdaptiveAvgPool2d(1) → per-frame feature          │  │
+│   │           Output: (B, T, 576)                               │  │
+│   │                    │                                        │  │
+│   │           Depthwise Conv1D + Pointwise Conv1D               │  │
+│   │           Output: (B, 256)                                  │  │
 │   │                    │                                        │  │
 │   │         ┌──────────┴──────────┐                            │  │
 │   │         │                     │                            │  │
 │   │   Intent Head           Direction Head                     │  │
-│   │   Linear(576→256)       Linear(576→256)                    │  │
+│   │   Linear(256→256)       Linear(256→256)                    │  │
 │   │   ReLU                  ReLU                               │  │
 │   │   Dropout(0.2)          Linear(256→2)                      │  │
-│   │   Linear(256→6)         Tanh → (dx, dy)                    │  │
-│   │   Softmax               ∈ [-1, 1]²                         │  │
-│   │   → probs (6,)                                             │  │
+│   │   Linear(256→5)         Tanh → (dx, dy)                    │  │
+│   │   Temperature softmax   ∈ [-1, 1]²                         │  │
+│   │   + UNCERTAIN abstain                                      │  │
 │   └─────────────────────────────────────────────────────────────┘  │
 │                                                                     │
 │   Output per person:                                                │
@@ -116,7 +121,7 @@ ERRATIC     = 5   # Hành vi bất thường / không đoán được
 ### Tại sao MobileNetV3-Small?
 
 - **Thiết kế cho edge/mobile**: squeeze-and-excite + hard-swish, tối ưu FLOP/accuracy
-- **Feature dim = 576**: đầu ra `backbone.features` sau `AdaptiveAvgPool2d(1)` đủ giàu cho phân loại 6 class
+- **Feature dim = 576**: đầu ra `backbone.features` sau `AdaptiveAvgPool2d(1)` đủ giàu cho phân loại 5 class trainable
 - **Pretrained ImageNet**: transfer learning mạnh kể cả khi dataset intent còn nhỏ
 - **FP16 friendly**: không có batch norm issue khi chuyển sang half precision
 
@@ -136,7 +141,7 @@ backbone.classifier = nn.Identity()   # Bỏ head gốc, lấy features thô
 ### Intent Head (Classification)
 
 ```
-Linear(576 → 256) → ReLU → Dropout(0.2) → Linear(256 → 6) → Softmax
+Conv1D temporal aggregation → Linear(256 → 256) → ReLU → Dropout(0.2) → Linear(256 → 5)
 ```
 
 - **Dropout(0.2)**: regularization tránh overfitting, quan trọng vì dataset intent thường mất cân bằng
@@ -194,7 +199,7 @@ BGR (H, W, 3)
 padding_ratio = 0.10   # 10% padding quanh bbox
 ```
 
-Padding giúp model nhìn thấy **context xung quanh người** (tay, chân, vật xung quanh), quan trọng để phân biệt CROSSING với FOLLOWING.
+Padding giúp model nhìn thấy **context xung quanh người** (tay, chân, vật xung quanh), quan trọng để phân biệt `CROSSING`, `APPROACHING` và mẫu `UNCERTAIN`.
 
 ---
 
@@ -302,14 +307,15 @@ ExperienceBuffer (HDF5)
 | Hạng mục                | Trạng thái     | Ghi chú                         |
 | ----------------------- | -------------- | ------------------------------- |
 | MobileNetV3 backbone    | ✅ Done        | FP16 on Jetson                  |
-| Intent head (6 class)   | ✅ Done        |                                 |
+| Temporal Conv1D/TCN     | ✅ Done        | Window ROI per track            |
+| Intent head (5 class)   | ✅ Done        | Runtime thêm `UNCERTAIN`        |
 | Direction head (aux)    | ✅ Done        |                                 |
 | Async inference daemon  | ✅ Done        | Non-blocking 30Hz               |
 | Auto device detection   | ✅ Done        | CUDA/CPU                        |
-| Training pipeline       | 🔄 In Progress | Cần autolabel chạy ổn định      |
-| TensorRT export         | ⬜ Planned     | Tăng tốc ~3x trên Jetson        |
-| Temporal context (LSTM) | ⬜ Research    | Cải thiện CROSSING vs FOLLOWING |
-| Confidence calibration  | ⬜ Research    | Temperature scaling             |
+| Dataset manifest gate   | ✅ Done        | Chặn legacy FOLLOW/review pending |
+| Confidence calibration  | ✅ Done        | Temperature scaling metadata    |
+| Distillation/quantize   | 🔄 In Progress | Export script có dynamic quantize |
+| Continual learning      | ✅ Baseline    | EWC + replay buffer             |
 
 ---
 

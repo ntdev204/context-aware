@@ -76,7 +76,7 @@ def _collect_files(path: Path) -> list[Path]:
 
 # Quality checks
 
-ACTION_MODES = ["STOP", "CRUISE", "CAUTIOUS", "AVOID", "FOLLOW"]
+ACTION_MODES = ["CRUISE", "CAUTIOUS", "AVOID", "RESERVED", "STOP"]
 
 
 def _quality_flags(frames: list[dict]) -> list[dict]:

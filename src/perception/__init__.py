@@ -1,7 +1,7 @@
 """Perception package — exports key types for easy import."""
 
 from .camera import Camera
-from .intent_cnn import ERRATIC, INTENT_NAMES, IntentCNN, IntentPrediction
+from .intent_cnn import ERRATIC, INTENT_NAMES, UNCERTAIN, IntentCNN, IntentPrediction
 from .roi_extractor import PersonROI, ROIExtractor
 from .tracker import Tracker
 from .yolo_detector import DetectionResult, FrameDetections, YOLODetector
@@ -17,5 +17,6 @@ __all__ = [
     "PersonROI",
     "ROIExtractor",
     "Tracker",
+    "UNCERTAIN",
     "YOLODetector",
 ]

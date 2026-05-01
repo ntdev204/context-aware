@@ -19,8 +19,8 @@ enum IntentClass {
   APPROACHING = 1;
   DEPARTING   = 2;
   CROSSING    = 3;
-  FOLLOWING   = 4;
-  ERRATIC     = 5;
+  ERRATIC     = 4;
+  UNCERTAIN   = 5;
 }
 
 // ═══════════════════════════════════════════════════════

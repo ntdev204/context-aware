@@ -199,7 +199,6 @@ class DatasetManager:
         }
 
     def _discard_current_locked(self) -> None:
-        mode = self._active_mode
         session_id = self._session_id
         self.roi_saver.discard_collection()
         self.exp_collector.stop_session()

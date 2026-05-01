@@ -120,7 +120,7 @@ scripts/analyze_ablation.py      (NEW)
   | S3  | Two-way traffic        | 120s     | 2-3      | Medium     |
   | S4  | Narrow passage         | 60s      | 1-2      | Medium     |
   | S5  | Crowd navigation       | 120s     | 4-6      | Hard       |
-  | S6  | Person following       | 120s     | 1 target | Medium     |
+  | S6  | Ambiguous trajectory   | 120s     | 1        | Medium     |
   | S7  | Erratic person         | 60s      | 1        | Hard       |
   | S8  | Mixed scenario         | 180s     | 3-5      | Hard       |
   - Mỗi scenario chạy ≥ 10 lần per baseline
