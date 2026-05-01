@@ -97,7 +97,7 @@ Expected startup output:
 
 ```
 INFO     Context-Aware AI Server starting
-INFO     IntentCNN loaded [device=cuda]
+INFO     Temporal Intent CNN loaded [device=cuda]
 INFO     Astra S OpenNI2 streams opened (640x480)
 INFO     Camera started: 640x480 @ 30 FPS [astra, depth=True]
 INFO     ZMQ Publisher started

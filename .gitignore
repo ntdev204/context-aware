@@ -21,6 +21,7 @@ models/*.onnx
 models/**/*.engine
 models/**/*.pt
 models/**/*.onnx
+models/**/*.log
 
 # ── Experience logs ─────────────────────────────────────────────────
 logs/

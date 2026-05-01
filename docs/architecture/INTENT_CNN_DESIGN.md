@@ -19,7 +19,7 @@ Mạng giải quyết bài toán: _"Robot có thể biết người đang địn
 | Tiêu chí           | YOLO Pose | Action Recognition (SlowFast) | Intent CNN (thiết kế này) |
 | ------------------ | --------- | ----------------------------- | ------------------------- |
 | Latency            | ~10ms     | ~150ms+                       | ~3ms (FP16)               |
-| Phụ thuộc temporal | Không     | Cần video clip                | Không (single frame)      |
+| Phụ thuộc temporal | Không     | Cần video clip                | Có, chuỗi ROI 15 frame    |
 | Nhận dạng ý định   | Không     | Hành động đã xảy ra           | Ý định đang xảy ra        |
 | Deploy Jetson      | Tốt       | Khó (VRAM)                    | Tốt (MobileNet)           |
 
@@ -44,9 +44,7 @@ UNCERTAIN   = 5   # Abstain: thiếu chắc chắn, không train trực tiếp
 
 ## 3. Kiến Trúc Tổng Thể (Full Pipeline)
 
-> **Cập nhật:** Đây là đồ thị mạng nơ-ron minh họa trực quan dưới dạng "Nodes & Edges" thể hiện đầy đủ chiều sâu thực tế 54 Layer của kiến trúc (1 Input + 50 Backbone + 1 Pooling + 1 Hidden + 1 Output).
-
-![Intent CNN 54-Layer Architecture Diagram](file:///d:/nckh/context-aware/docs/architecture/intent_cnn_54_layers.png)
+> **Cập nhật:** Sơ đồ dưới đây mô tả kiến trúc hiện hành ở mức block chức năng. Tài liệu không còn dùng hình 54-layer cũ vì nó phản ánh snapshot backbone decomposition trước đây, không còn đúng với temporal model hiện tại.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐

@@ -1059,7 +1059,7 @@ RasPi cần một **bridge node** để chuyển đổi giữa ZMQ messages và 
 
 | AI Mode    | RasPi Behavior                              | Nav2 Integration                                |
 | ---------- | ------------------------------------------- | ----------------------------------------------- |
-| `CRUISE`   | cmd_vel.linear = max × velocity_scale       | Global planner active, local planner follows AI |
+| `CRUISE`   | cmd_vel.linear = max × velocity_scale       | Global planner active, AI chỉ đóng vai trò perception/context |
 | `CAUTIOUS` | cmd_vel.linear = max × velocity_scale × 0.6 | Local planner active with conservative params   |
 | `AVOID`    | Heading offset applied to cmd_vel           | Local planner DWB with AI-suggested direction   |
 | `RESERVED` | Reserved slot, no active behavior           | Ignored by controller                           |
@@ -1484,7 +1484,7 @@ laptop:
 
 #### B1. State Representation (⚠️ CRITICAL — Design Early)
 
-**Current limitation**: Only snapshot-based observation, no temporal encoding.
+**Current implementation note**: Context builder đã temporal-ready; Temporal Intent CNN runtime hiện dùng temporal ROI sequence dài 15 frame.
 
 | Aspect          | Detail                                                            |
 | --------------- | ----------------------------------------------------------------- |
@@ -1494,7 +1494,7 @@ laptop:
 | **Requirement** | State must be: extensible, versioned, backward-compatible         |
 
 > ⚠️ **WARNING**
-> State representation phải được thiết kế **temporal-ready từ ngày đầu**, dù Phase 1 chỉ dùng snapshot. Thay đổi state space sau = retrain toàn bộ RL.
+> State representation phải được thiết kế **temporal-ready từ đầu**. Runtime hiện tại vẫn giữ STOP-only policy, nhưng perception và intent stack đã chuyển sang temporal API.
 
 **Implementation — Temporal-Ready State**:
 
@@ -1508,7 +1508,7 @@ class ObservationSpace:
     observation_history: deque    # Ring buffer of past observations
 
     def get_stacked_observation(self) -> np.ndarray:
-        """Returns stacked observations. k=1 = snapshot (backward-compatible)."""
+        """Returns stacked observations. k=1 chỉ là context-state tối thiểu, không phải snapshot API cho intent model."""
         if self.temporal_stack_size == 1:
             return self.current_observation
         return np.concatenate(list(self.observation_history))
@@ -1908,7 +1908,7 @@ Most research papers:
 │  GAP addressed: #5 (System-level deployment pipeline)    │
 │                                                          │
 │  ✅ YOLO + ByteTrack (detection + tracking)              │
-│  ✅ Simple CNN (no temporal, snapshot only)               │
+│  ✅ Temporal Intent CNN baseline (MobileNetV3 + Conv1D)   │
 │  ✅ Heuristic navigation policy (rule-based, no RL)      │
 │  ✅ Full data logging pipeline (C1 — CRITICAL)           │
 │  ✅ ZMQ communication to RasPi                           │

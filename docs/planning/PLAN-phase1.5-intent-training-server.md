@@ -128,7 +128,7 @@ The sidecar stores `bbox_w/h` and other fields that exceed filename length limit
 | **STATIONARY** | 0 | `abs(Δdist) < 100mm AND abs(Δcx) < threshold` |
 | **APPROACHING** | 1 | `dist[t+N] - dist[t] < -200mm` |
 | **DEPARTING** | 2 | `dist[t+N] - dist[t] > +200mm` |
-| **CROSSING** | 3 | `abs(Δcx) > threshold AND abs(Δdist) < 150mm` |
+| **CROSSING** | 3 | `abs(Δcx) > threshold` với bằng chứng dịch chuyển ngang rõ rệt |
 | **ERRATIC** | 4 | high variance/sign changes; requires human review |
 | **UNCERTAIN** | 5 | abstain; skipped unless manually relabeled |
 
@@ -203,7 +203,7 @@ context-aware/
 - [x] Sidecar `metadata.jsonl` present in each batch archive
 - [x] Auto-label depth test: person falls (dist stable, bbox grows) → NOT labeled APPROACHING
 - [x] Fake batch `.tar.gz` → watcher detects → extract → labels 6 classes
-- [x] `train_intent_cnn.py` outputs 6-class confusion matrix
+- [x] `train_intent_cnn.py` outputs 5-class trainable evaluation; `UNCERTAIN` được tách riêng như abstain/review
 
 ### Milestone 3 — Data Exploration ✅
 - [x] `explore_roi.py` generates HTML report with all 8 analysis sections
