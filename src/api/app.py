@@ -210,7 +210,7 @@ def create_app(state: ServerState) -> FastAPI:
         return FileResponse(
             zip_path,
             media_type="application/zip",
-            filename=f"context_aware_dataset_{session_id}.zip",
+            filename=f"context_aware_session_{session_id}.zip",
             background=background_tasks,
         )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import time
 import uuid
@@ -33,6 +34,7 @@ class DatasetManager:
         self._started_at: float | None = None
         self._stopped_at: float | None = None
         self._zip_path: Path | None = None
+        self._bundle_dir: Path | None = None
 
     def start(self, mode: str) -> dict[str, Any]:
         mode = self._normalize_mode(mode)
@@ -88,11 +90,15 @@ class DatasetManager:
             session_id = self._session_id
             mode = self._active_mode
             zip_path = self._zip_path
+            bundle_dir = self._bundle_dir
             self._zip_path = None
+            self._bundle_dir = None
             self._discard_current_locked()
 
         if zip_path and zip_path.exists():
             zip_path.unlink()
+        if bundle_dir and bundle_dir.exists():
+            shutil.rmtree(bundle_dir)
         return {"status": "discarded", "session_id": session_id, "dataset_mode": mode}
 
     def preview_frame_path(self, index: int) -> Path:
@@ -130,12 +136,19 @@ class DatasetManager:
         if zip_path.exists():
             zip_path.unlink()
 
-        self._write_manifest(root, status)
+        if status.get("dataset_mode") == DATASET_INTENT:
+            root = self._prepare_intent_training_bundle(root, status)
+            zip_path = root.with_suffix(".zip")
+            if zip_path.exists():
+                zip_path.unlink()
+        else:
+            self._write_manifest(root, status)
+
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             if status.get("dataset_mode") == DATASET_INTENT:
                 for path in sorted(root.rglob("*")):
                     if path.is_file():
-                        archive.write(path, path.relative_to(root))
+                        archive.write(path, Path(session_id) / path.relative_to(root))
             else:
                 for path in self._hdf5_session_files(session_id):
                     archive.write(path, path.name)
@@ -145,6 +158,8 @@ class DatasetManager:
 
         with self._lock:
             self._zip_path = zip_path
+            if status.get("dataset_mode") == DATASET_INTENT:
+                self._bundle_dir = root
         return zip_path, session_id
 
     def cleanup_after_download(self) -> None:
@@ -272,10 +287,72 @@ class DatasetManager:
         manifest["created_at"] = time.time()
         (root / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
+    def _prepare_intent_training_bundle(self, raw_session_dir: Path, status: dict[str, Any]) -> Path:
+        """Build a session-scoped train-ready bundle on Jetson before download."""
+        session_id = str(status["session_id"])
+        bundle_dir = raw_session_dir.parent / f"{session_id}_train_ready"
+        if bundle_dir.exists():
+            shutil.rmtree(bundle_dir)
+
+        raw_dir = bundle_dir / "raw"
+        labeled_dir = bundle_dir / "intent_dataset"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        labeled_dir.mkdir(parents=True, exist_ok=True)
+
+        for path in sorted(raw_session_dir.iterdir()):
+            if path.is_file():
+                shutil.copy2(path, raw_dir / path.name)
+
+        report_path = ""
+        validation_status: int | None = None
+        manifest: dict[str, Any] | None = None
+        error: str | None = None
+
+        try:
+            from scripts.data.autolabel import run_autolabel
+            from scripts.data.build_intent_manifest import build_manifest
+            from scripts.data.explore_roi import DatasetExplorer
+            from scripts.data.validate_dataset import validate
+
+            run_autolabel(raw_dir, labeled_dir)
+            report_path = DatasetExplorer(labeled_dir, labeled_dir).run()
+            if report_path:
+                validation_status = validate(Path(report_path))
+            manifest = build_manifest(labeled_dir, temporal_window=15)
+            manifest["validation_status"] = validation_status
+            with open(labeled_dir / "manifest.json", "w", encoding="utf-8") as handle:
+                json.dump(manifest, handle, indent=2)
+        except Exception as exc:
+            error = str(exc)
+
+        bundle_manifest = {
+            "bundle_type": "intent_train_ready_session",
+            "session_id": session_id,
+            "created_at": time.time(),
+            "raw_dir": "raw",
+            "train_dataset_dir": "intent_dataset",
+            "frame_count": status.get("frame_count", 0),
+            "autolabel_completed": error is None,
+            "report_path": str(Path(report_path).relative_to(bundle_dir)) if report_path else None,
+            "validation_status": validation_status,
+            "ready_for_phase2_training": bool(
+                manifest.get("ready_for_phase2_training") if manifest else False
+            ),
+            "error": error,
+        }
+        (bundle_dir / "manifest.json").write_text(
+            json.dumps(bundle_manifest, indent=2),
+            encoding="utf-8",
+        )
+        return bundle_dir
+
     def _cleanup_zip_locked(self) -> None:
         if self._zip_path and self._zip_path.exists():
             self._zip_path.unlink()
         self._zip_path = None
+        if self._bundle_dir and self._bundle_dir.exists():
+            shutil.rmtree(self._bundle_dir)
+        self._bundle_dir = None
         for preview in self.exp_buffer.write_dir.glob("preview_*.jpg"):
             preview.unlink()
         manifest = self.exp_buffer.write_dir / "manifest.json"
