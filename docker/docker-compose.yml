@@ -105,6 +105,7 @@ services:
     volumes:
       - ../data/roi_dataset:/data/roi_incoming      # batches từ Jetson
       - ../data/intent_dataset:/data/intent_dataset  # labeled dataset
+      - ../data/server_labeled_datasets:/data/server_labeled_datasets
       - ../models:/workspace/models          # share model weights
       - ../scripts:/workspace/scripts:ro     # share scripts
       - ../src:/workspace/src:ro             # share model definitions
@@ -115,6 +116,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - ROI_WATCH_DIR=/data/roi_incoming
       - DATASET_DIR=/data/intent_dataset
+      - DATASET_IMPORT_DIR=/data/server_labeled_datasets
       - MODEL_DIR=/workspace/models/cnn_intent
       - MODE=development
       - PYTHONPATH=/workspace

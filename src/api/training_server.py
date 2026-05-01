@@ -3,16 +3,18 @@ from __future__ import annotations
 import csv
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
 import time
 import uuid
+import zipfile
 from collections import deque
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -20,6 +22,7 @@ from pydantic import BaseModel, Field
 WORKSPACE = Path(os.getenv("CONTEXT_AWARE_WORKSPACE", "/workspace"))
 DEFAULT_DATASET = Path(os.getenv("DATASET_DIR", "/data/intent_dataset"))
 DEFAULT_MODEL_DIR = Path(os.getenv("MODEL_DIR", "/workspace/models/cnn_intent"))
+DATASET_IMPORT_DIR = Path(os.getenv("DATASET_IMPORT_DIR", "/data/server_labeled_datasets"))
 LOG_LIMIT = 500
 
 
@@ -167,6 +170,47 @@ def _resolve_existing_dir(value: str) -> Path:
     return path
 
 
+def _import_dataset_archive(file: UploadFile) -> dict[str, Any]:
+    DATASET_IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+    dataset_id = time.strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
+    upload_path = DATASET_IMPORT_DIR / f"{dataset_id}.zip"
+    extract_dir = DATASET_IMPORT_DIR / dataset_id
+    with upload_path.open("wb") as handle:
+        shutil.copyfileobj(file.file, handle)
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        with zipfile.ZipFile(upload_path) as archive:
+            root = extract_dir.resolve()
+            for member in archive.infolist():
+                target = (extract_dir / member.filename).resolve()
+                if target != root and root not in target.parents:
+                    raise ValueError(f"Unsafe archive member path: {member.filename}")
+            archive.extractall(extract_dir)
+    finally:
+        upload_path.unlink(missing_ok=True)
+
+    dataset_dir = _find_train_dataset_dir(extract_dir)
+    return {
+        "status": "ok",
+        "dataset_id": dataset_id,
+        "dataset": str(dataset_dir),
+        "import_dir": str(extract_dir),
+    }
+
+
+def _find_train_dataset_dir(root: Path) -> Path:
+    candidates = [root]
+    candidates.extend(p for p in root.rglob("intent_dataset") if p.is_dir())
+    candidates.extend(p for p in root.rglob("*") if p.is_dir() and (p / "metadata.jsonl").exists())
+    for candidate in candidates:
+        if (candidate / "metadata.jsonl").exists() and any(
+            (candidate / label).is_dir()
+            for label in ("stationary", "approaching", "departing", "crossing", "erratic")
+        ):
+            return candidate.resolve()
+    raise ValueError("No train-ready intent_dataset found in archive")
+
+
 def _resolve_output_dir(value: str) -> Path:
     path = Path(value).expanduser()
     if not path.is_absolute():
@@ -309,6 +353,16 @@ def defaults() -> dict[str, Any]:
 @app.get("/training/status")
 def status() -> dict[str, Any]:
     return job.snapshot()
+
+
+@app.post("/training/datasets/import")
+def import_dataset(file: UploadFile = File(...)) -> dict[str, Any]:
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Upload a .zip dataset archive")
+    try:
+        return _import_dataset_archive(file)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/training/start")

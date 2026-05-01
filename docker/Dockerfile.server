@@ -34,7 +34,7 @@ RUN pip install --no-cache-dir \
     ultralytics==8.3.0 \
     supervision>=0.22.0 \
     watchdog pandas matplotlib seaborn scikit-learn \
-    pytest pytest-asyncio ruff httpx
+    pytest pytest-asyncio ruff httpx python-multipart
 
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -44,7 +44,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Ensure volumes exist inside container
-RUN mkdir -p /data/roi_incoming /data/intent_dataset models/cnn_intent
+RUN mkdir -p /data/roi_incoming /data/intent_dataset /data/server_labeled_datasets models/cnn_intent
 
 EXPOSE 8080 22
 
