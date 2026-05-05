@@ -1,0 +1,111 @@
+# Development Configuration -- Windows/Linux laptop
+# USB camera, PyTorch models (no TensorRT), debug logging
+
+system:
+  mode: development
+  log_level: DEBUG
+  fps_target: 30
+  device: cuda
+
+logging:
+  dir: logs
+
+camera:
+  device_id: 0
+  backend: usb
+  width: 640
+  height: 480
+  fps: 30
+
+perception:
+  yolo:
+    model_path: models/yolo/yolo11n.pt
+    use_tensorrt: false
+    confidence_threshold: 0.5
+    person_confidence_threshold: 0.5
+    person_min_height_px: 48
+    iou_threshold: 0.45
+    input_size: [480, 640]
+    classes:
+      [
+        "person",
+        "obstacle",
+        "static_obstacle",
+        "dynamic_hazard",
+        "door",
+        "wall",
+      ]
+
+  tracker:
+    max_age: 30
+    min_hits: 3
+    iou_threshold: 0.3
+    hold_missing: 12
+    bbox_smoothing_alpha: 0.5
+
+  roi:
+    width: 128
+    height: 256
+    padding_ratio: 0.1
+
+  cnn_intent:
+    model_path: null
+    use_tensorrt: false
+    max_batch_size: 5
+    temporal_window: 15
+    confidence_threshold: 0.55
+    margin_threshold: 0.12
+    temperature: 1.0
+
+context:
+  temporal_stack_size: 3
+  state_version: "v2-temporal-roi-k15"
+  observation_dim: 114
+  occupancy_grid_size: 8
+
+navigation:
+  policy_type: heuristic
+
+  heuristic:
+    cruise_velocity: 1.0
+    cautious_velocity: 0.6
+    avoid_velocity: 0.3
+    stop_only: true
+
+  safety:
+    hard_stop_distance_person: 2.0
+    hard_stop_distance_obstacle: 0.3
+    slow_down_distance: 3.0
+    slow_down_factor: 0.5
+    watchdog_timeout_ms: 500
+    watchdog_log_interval_s: 5.0
+    battery_threshold_pct: 10.0
+
+communication:
+  zmq:
+    nav_cmd_port: 5555
+    detections_port: 5556
+    robot_state_port: 5560
+    config_port: 5570
+    rasp_pi_ip: "25.12.4.101"
+    publish_rate_nav: 30
+    publish_rate_det: 10
+    sndhwm: 2
+    rcvhwm: 2
+
+experience:
+  enabled: true
+  collection_enabled: true
+  hdf5_enabled: true
+  buffer_size: 10000
+  jpeg_quality: 85
+  write_dir: logs/experience
+  write_format: hdf5
+  async_write: true
+  roi_save_dir: logs/roi_dataset
+  roi_jpeg_quality: 90
+
+api:
+  host: "0.0.0.0"
+  port: 8080
+  stream_jpeg_quality: 70

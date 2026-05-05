@@ -7,12 +7,13 @@ Replaces the raw MJPEG HTTP server with a standard FastAPI application.
 Endpoints:
     GET  /health              - liveness + status summary
     GET  /metrics             - full inference metrics
+    GET  /detections          - latest detection snapshot
     GET  /stream              - MJPEG video stream
     WS   /ws/metrics          - live metrics push (1 Hz)
     WS   /ws/detections       - per-frame detection JSON
     POST /control/stop        - force STOP mode
-    POST /control/mode/{mode} - set mode override
-    DELETE /control/mode      - clear override, restore policy
+    POST /control/mode/{mode} - set STOP/YIELD override
+    DELETE /control/mode      - clear override, restore STOP-only policy
     GET  /config              - current runtime config snapshot
     PATCH /config             - update runtime config (fps_target, thresholds)
 """
@@ -21,19 +22,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 import threading
 import time
+from collections import deque
 from collections.abc import Generator
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel
 
+from .. import __version__
 from .state import VALID_MODE_OVERRIDES, ServerState
 
 log = logging.getLogger(__name__)
+
+MJPEG_FRAME_INTERVAL_S = 1.0 / 30.0
 
 UPDATABLE_CONFIG_KEYS = frozenset(
     {
@@ -45,10 +55,14 @@ UPDATABLE_CONFIG_KEYS = frozenset(
 )
 
 
+class DatasetStartRequest(BaseModel):
+    mode: str = "intent_cnn"
+
+
 def create_app(state: ServerState) -> FastAPI:
     app = FastAPI(
         title="Context-Aware AI Server",
-        version="1.0.0",
+        version=__version__,
         description="Edge API for real-time monitoring and control of the Mecanum robot AI server.",
     )
 
@@ -84,24 +98,160 @@ def create_app(state: ServerState) -> FastAPI:
             "obstacles": m.obstacles,
             "buffer_size": m.buffer_size,
             "depth_coverage_pct": round(m.depth_coverage_pct, 1),
+            "robot_velocity": {
+                "vx": round(m.vx, 3),
+                "vy": round(m.vy, 3),
+                "vtheta": round(m.vtheta, 3),
+            },
+            "lidar": {
+                "front": round(m.lidar_front, 3),
+                "rear": round(m.lidar_rear, 3),
+                "left": round(m.lidar_left, 3),
+                "right": round(m.lidar_right, 3),
+                "scan_count": m.lidar_scan_count,
+            },
             "mode": m.mode,
             "mode_override": state.get_mode_override(),
             "frame_id": m.frame_id,
             "uptime_s": round(state.uptime_seconds, 1),
         }
 
+    @app.get("/detections", tags=["monitoring"])
+    def detections() -> dict[str, Any]:
+        return state.get_detections()
+
+    @app.get("/logs", tags=["monitoring"])
+    def logs(limit: int = 200) -> dict[str, Any]:
+        limit = max(1, min(limit, 500))
+        entries = _collect_log_entries(limit)
+        return {
+            "status": "ok",
+            "source": "context-aware",
+            "logs": entries[:limit],
+            "files": sorted(
+                {entry["metadata"]["path"] for entry in entries if entry.get("metadata")}
+            ),
+        }
+
     @app.get("/stream", tags=["monitoring"])
     def mjpeg_stream() -> StreamingResponse:
         def generate() -> Generator[bytes, None, None]:
+            last_frame = b""
             while state.is_running():
                 frame = state.get_frame()
-                if frame:
+                if frame and frame != last_frame:
                     yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
-                time.sleep(0.033)
+                    last_frame = frame
+
+                time.sleep(MJPEG_FRAME_INTERVAL_S)
 
         return StreamingResponse(
             generate(),
             media_type="multipart/x-mixed-replace; boundary=frame",
+        )
+
+    # ------------------------------------------------------------------
+    # Dataset collection
+    # ------------------------------------------------------------------
+
+    @app.get("/dataset/status", tags=["dataset"])
+    def dataset_status() -> dict[str, Any]:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            return {"status": "unavailable", "message": "No dataset manager configured"}
+        return manager.status()
+
+    @app.post("/dataset/start", tags=["dataset"])
+    def dataset_start(body: DatasetStartRequest) -> dict[str, Any]:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        try:
+            return manager.start(body.mode)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/dataset/stop", tags=["dataset"])
+    def dataset_stop() -> dict[str, Any]:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        return manager.stop()
+
+    @app.delete("/dataset", tags=["dataset"])
+    def dataset_discard() -> dict[str, Any]:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        return manager.discard()
+
+    @app.post("/dataset/save", tags=["dataset"])
+    def dataset_save() -> dict[str, Any]:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        try:
+            return manager.save()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/dataset/images", tags=["dataset"])
+    def dataset_images() -> dict[str, Any]:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        try:
+            return manager.list_images()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/dataset/images/{index}", tags=["dataset"])
+    def dataset_delete_image(index: int) -> dict[str, Any]:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        try:
+            return manager.delete_image(index)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/dataset/autolabel", tags=["dataset"])
+    def dataset_autolabel() -> dict[str, Any]:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        try:
+            return manager.autolabel()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/dataset/preview/{index}", tags=["dataset"])
+    def dataset_preview(index: int) -> Response:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        try:
+            path = manager.preview_frame_path(index)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return Response(content=path.read_bytes(), media_type="image/jpeg")
+
+    @app.get("/dataset/download", tags=["dataset"])
+    def dataset_download() -> FileResponse:
+        manager = state.get_dataset_manager()
+        if manager is None:
+            raise HTTPException(status_code=503, detail="No dataset manager configured")
+        try:
+            zip_path, session_id = manager.build_zip()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return FileResponse(
+            zip_path,
+            media_type="application/zip",
+            filename=f"context_aware_session_{session_id}.zip",
         )
 
     # ------------------------------------------------------------------
@@ -120,6 +270,13 @@ def create_app(state: ServerState) -> FastAPI:
                         "inference_ms": round(m.inference_ms, 2),
                         "persons": m.persons,
                         "obstacles": m.obstacles,
+                        "lidar": {
+                            "front": round(m.lidar_front, 3),
+                            "rear": round(m.lidar_rear, 3),
+                            "left": round(m.lidar_left, 3),
+                            "right": round(m.lidar_right, 3),
+                            "scan_count": m.lidar_scan_count,
+                        },
                         "mode": m.mode,
                         "mode_override": state.get_mode_override(),
                         "uptime_s": round(state.uptime_seconds, 1),
@@ -205,3 +362,88 @@ def start_api_server(state: ServerState, host: str = "0.0.0.0", port: int = 8080
     thread = threading.Thread(target=_run, daemon=True, name="api-server")
     thread.start()
     log.info("Edge API started: http://%s:%d  (docs: /docs)", host, port)
+
+
+def _collect_log_entries(limit: int) -> list[dict[str, Any]]:
+    per_file = max(20, min(limit, 200))
+    entries: list[dict[str, Any]] = []
+    for path in _log_file_candidates():
+        for line in _tail_lines(path, per_file):
+            line = line.strip()
+            if not line:
+                continue
+            timestamp, severity, message = _parse_log_line(line)
+            entries.append(
+                {
+                    "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
+                    "severity": severity,
+                    "source": f"context-aware:{path.name}",
+                    "message": message[:2000],
+                    "metadata": {"path": str(path)},
+                }
+            )
+    entries.sort(key=lambda item: item.get("timestamp") or "", reverse=True)
+    return entries
+
+
+def _log_file_candidates() -> list[Path]:
+    roots = []
+    env_dir = os.environ.get("CONTEXT_AWARE_LOG_DIR")
+    if env_dir:
+        roots.append(Path(env_dir))
+    roots.extend([Path("/app/logs"), Path("logs")])
+
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        root = root.expanduser()
+        candidates = []
+        if root.is_file():
+            candidates = [root]
+        elif root.is_dir():
+            candidates = [
+                *root.glob("*.log"),
+                *root.glob("*.txt"),
+                *root.glob("**/*.log"),
+            ]
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if resolved in seen or not resolved.is_file():
+                continue
+            seen.add(resolved)
+            files.append(resolved)
+
+    files.sort(key=lambda item: item.stat().st_mtime if item.exists() else 0, reverse=True)
+    return files[:20]
+
+
+def _tail_lines(path: Path, max_lines: int) -> list[str]:
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            return list(deque(handle, maxlen=max_lines))
+    except OSError:
+        return []
+
+
+def _parse_log_line(line: str) -> tuple[str | None, str, str]:
+    timestamp = None
+    message = line
+    iso_match = re.match(r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)", line)
+    if iso_match:
+        timestamp = iso_match.group(1).replace(",", ".")
+        message = line[iso_match.end() :].strip(" -")
+
+    severity = "INFO"
+    sev_match = re.search(
+        r"\b(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)\b", line, re.IGNORECASE
+    )
+    if sev_match:
+        severity = sev_match.group(1).upper()
+        if severity == "WARN":
+            severity = "WARNING"
+        if severity == "FATAL":
+            severity = "CRITICAL"
+    return timestamp, severity, message

@@ -19,7 +19,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import load_config
-from src.navigation import ContextBuilder, HeuristicPolicy, SafetyMonitor
+from src.navigation import ContextBuilder, HeuristicPolicy
 from src.perception import IntentCNN, ROIExtractor, Tracker, YOLODetector
 
 
@@ -51,7 +51,6 @@ def run_benchmark(args) -> None:
     cnn.load()
     ctx_bld = ContextBuilder()
     policy = HeuristicPolicy()
-    safety = SafetyMonitor()
 
     # Initialize ExperimentLogger
     sys.path.insert(
@@ -91,8 +90,7 @@ def run_benchmark(args) -> None:
         rois = roi_ex.extract(frame, frame_det)
         preds = cnn.predict_batch(rois)
         obs = ctx_bld.build(frame_det, preds)
-        cmd = policy.decide(obs, frame_det, preds)
-        cmd = safety.check(cmd, frame_det, preds)
+        policy.decide(obs, frame_det, preds)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         latencies.append(elapsed_ms)

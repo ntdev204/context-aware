@@ -8,7 +8,7 @@
 #   make jetson-build-dev
 #   make jetson-build-prod
 
-ARG L4T_TAG=r36.2.0
+ARG L4T_TAG=r36.4.0
 FROM dustynv/l4t-pytorch:${L4T_TAG} AS jetson-base
 
 # dustynv base image sets PIP_INDEX_URL to a local wheel server that is
@@ -17,7 +17,8 @@ FROM dustynv/l4t-pytorch:${L4T_TAG} AS jetson-base
 ENV PIP_INDEX_URL=https://pypi.org/simple \
     PIP_EXTRA_INDEX_URL=https://pypi.org/simple \
     PIP_RETRIES=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:/usr/lib/aarch64-linux-gnu/tegra:$LD_LIBRARY_PATH
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -50,6 +51,7 @@ RUN mkdir -p /tmp/orbbec && \
 WORKDIR /app
 
 COPY requirements.txt pyproject.toml ./
+RUN pip install --no-cache-dir --upgrade "typing_extensions>=4.12.2,<5.0.0"
 RUN pip install --no-cache-dir -r requirements.txt
 
 # dustynv builds torchvision from source (no pip metadata).
@@ -66,7 +68,7 @@ RUN pip install --no-cache-dir --no-deps ultralytics==8.3.0
 COPY . .
 
 # Fail the build if proto generation fails -- do not silently skip.
-RUN python scripts/generate_proto.py
+RUN python scripts/infra/generate_proto.py
 
 RUN mkdir -p models/yolo models/cnn_intent models/rl_policy /app/logs/experience /app/config
 
@@ -91,6 +93,6 @@ ENV CUDA_MODULE_LOADING=LAZY \
     MODE=production
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python scripts/health_check.py || exit 1
+    CMD python scripts/infra/health_check.py || exit 1
 
 CMD ["python", "-m", "src.main"]

@@ -1,19 +1,51 @@
-"""Import human-annotated datasets from Label Studio or Roboflow.
-
-Reads a standard YOLO formatted export and imports into intent_dataset/human/
-
-Expected input structure (Label Studio YOLO format):
-export_dir/
-├── images/
-│   ├── roi_...jpg
-└── labels/
-    ├── roi_...txt  (class_id cx cy w h)
-    └── classes.txt (list of class names)
-"""
-
 import argparse
+import json
 import shutil
+import time
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+try:
+    import sys
+
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from src.perception.intent_labels import canonical_label, is_trainable_label
+except Exception:  # pragma: no cover
+    def canonical_label(label: str | None) -> str:
+        label_up = str(label or "UNCERTAIN").strip().upper()
+        return "UNCERTAIN" if label_up in {"FOLLOW", "FOLLOWING"} else label_up
+
+    def is_trainable_label(label: str | None) -> bool:
+        return canonical_label(label) in {
+            "STATIONARY",
+            "APPROACHING",
+            "DEPARTING",
+            "CROSSING",
+            "ERRATIC",
+        }
+
+
+def label_dir_name(label: str | None) -> str:
+    return canonical_label(label).lower()
+
+
+def _append_jsonl_line(path: Path, row: dict) -> None:
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    start = time.time()
+    while lock_path.exists():
+        if time.time() - start > 10.0:
+            raise TimeoutError(f"Timed out waiting for metadata lock: {lock_path}")
+        time.sleep(0.05)
+    lock_path.write_text(str(time.time()), encoding="utf-8")
+    try:
+        with open(path, "a", encoding="utf-8") as jf:
+            jf.write(json.dumps(row, ensure_ascii=False) + "\n")
+    finally:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def import_dataset(export_dir: Path, output_dir: Path) -> None:
@@ -29,13 +61,11 @@ def import_dataset(export_dir: Path, output_dir: Path) -> None:
         print("[-] 'classes.txt' not found in labels directory. Cannot map class IDs.")
         return
 
-    # Load classes
     with open(classes_file, encoding="utf-8") as f:
         classes = [line.strip() for line in f if line.strip()]
 
     print(f"[*] Found {len(classes)} classes: {classes}")
 
-    # Process images
     images = list(images_dir.glob("*.jpg"))
     print(f"[*] Found {len(images)} images to import.")
 
@@ -53,7 +83,6 @@ def import_dataset(export_dir: Path, output_dir: Path) -> None:
         if not lines:
             continue
 
-        # For intent classification from ROI, we just take the first bounding box's class
         first_line = lines[0].strip()
         if not first_line:
             continue
@@ -65,15 +94,29 @@ def import_dataset(export_dir: Path, output_dir: Path) -> None:
             print(f"[!] Invalid class_id {class_id} in {txt_path.name}")
             continue
 
-        class_name = classes[class_id]
+        class_name = canonical_label(classes[class_id])
+        if not is_trainable_label(class_name):
+            print(f"[!] Skipping non-trainable label {classes[class_id]} in {txt_path.name}")
+            continue
 
-        # Save to output_dir/class_name/img.jpg
-        class_dir = output_dir / class_name
+        class_dir_name = label_dir_name(class_name)
+        class_dir = output_dir / class_dir_name
         class_dir.mkdir(exist_ok=True)
 
-        # Prefix with human_ to avoid clashes and mark origin
         dest_path = class_dir / f"human_{img_path.name}"
         shutil.copy2(img_path, dest_path)
+        _append_jsonl_line(
+            output_dir / "imported_metadata.jsonl",
+            {
+                "file": f"{class_dir_name}/{dest_path.name}",
+                "source_file": img_path.name,
+                "label": class_name,
+                "label_source": "human",
+                "review_status": "human_verified",
+                "review_required": False,
+                "ts": int(time.time() * 1000),
+            },
+        )
         imported += 1
 
     print(f"[+] Successfully imported {imported} human-labeled images to: {output_dir}")

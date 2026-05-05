@@ -20,8 +20,15 @@ try:
 except ImportError:  # pragma: no cover
     zmq = None  # type: ignore[assignment]
 
+import struct
+
 from ..navigation.nav_command import NavigationCommand
 from ..perception.yolo_detector import FrameDetections
+
+try:
+    from .proto import messages_pb2 as pb
+except ImportError:
+    pb = None
 
 logger = logging.getLogger(__name__)
 
@@ -103,52 +110,44 @@ class ZMQPublisher:
         sock = self._ctx.socket(zmq.PUB)
         sock.setsockopt(zmq.SNDHWM, 2)
         sock.setsockopt(zmq.LINGER, 0)
-        sock.setsockopt(zmq.CONFLATE, 1)
+        # Bỏ zmq.CONFLATE vì CONFLATE làm hỏng (drop) multipart message trong ZMQ PUB
         sock.bind(f"tcp://{self.bind_host}:{port}")
         return sock
 
     @staticmethod
     def _encode_nav_cmd(cmd: NavigationCommand) -> bytes:
-        """Encode NavigationCommand to Protobuf bytes.
+        """Encode NavigationCommand thành binary struct để gửi cho Pi.
 
-        Import proto here to avoid import-time dependency on generated code.
-        Falls back to a simple binary struct if proto not compiled yet.
+        Format (29 bytes): i f f f i f f B
+          - mode           : int32   (NavigationMode)
+          - velocity_scale : float32 (Linear X)
+          - velocity_y     : float32 (Linear Y)
+          - heading_offset : float32 (Angular Z)
+          - reserved_id    : int32   (kept as -1 for binary compatibility)
+          - timestamp      : float32 (epoch seconds, truncated ok)
+          - confidence     : float32
+          - safety_override: uint8
         """
-        try:
-            from .proto import messages_pb2 as pb
-
-            msg = pb.NavigationCommand()
-            msg.mode = int(cmd.mode)
-            msg.velocity_scale = cmd.velocity_scale
-            msg.heading_offset = cmd.heading_offset
-            msg.follow_target_id = cmd.follow_target_id
-            msg.timestamp = cmd.timestamp
-            msg.confidence = cmd.confidence
-            msg.safety_override = cmd.safety_override
-            return msg.SerializeToString()
-        except (ImportError, AttributeError):
-            import struct
-
-            return struct.pack(
-                "!iffiffB",
-                int(cmd.mode),
-                cmd.velocity_scale,
-                cmd.heading_offset,
-                cmd.follow_target_id,
-                cmd.timestamp,
-                cmd.confidence,
-                int(cmd.safety_override),
-            )
+        return struct.pack(
+            "!ifffiffB",
+            int(cmd.mode),
+            float(cmd.velocity_scale),
+            float(cmd.velocity_y),
+            float(cmd.heading_offset),
+            -1,
+            float(cmd.timestamp),
+            float(cmd.confidence),
+            int(cmd.safety_override),
+        )
 
     @staticmethod
     def _encode_detections(frame_det: FrameDetections) -> bytes:
+        if pb is None:
+            return b""
         try:
-            from .proto import messages_pb2 as pb
-
             msg = pb.DetectionList()
             msg.timestamp = frame_det.timestamp
             msg.frame_id = frame_det.frame_id
-            msg.free_space_ratio = frame_det.free_space_ratio
             for d in frame_det.all_detections:
                 det = msg.detections.add()
                 det.track_id = d.track_id

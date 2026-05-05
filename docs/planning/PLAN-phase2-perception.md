@@ -1,443 +1,724 @@
-# PLAN — Phase 2: Perception + Temporal Intent (GAP #2 Prep)
+# PLAN - Phase 2: Temporal Intent CNN + Dataset Gate
 
-> **Project**: Context-Aware Navigation for Mecanum Robot
-> **Phase**: 2 of 5
-> **Timeline**: Week 4–5
-> **Status**: 📋 Planning
-> **Dependencies**: Phase 1 hoàn thành (data logging, ZMQ, perception pipeline, Docker infra)
-> **Ref**: [system-design.md](../architecture/system-design.md) — Section 6, 16 (GAP #2), 17
-> **GAP addressed**: #2 prep (temporal intent infrastructure)
+> **Updated:** 2026-05-01  
+> **Status:** planned / implementation baseline exists, but phase-2 training is not approved until dataset gates pass  
+> **Scope:** collect a clean temporal ROI dataset, train the first exportable Temporal Intent CNN, calibrate confidence, and prepare the artifact for runtime evaluation on Jetson.
 
----
+Phase 2 is the perception-training phase. Phase 1 proved that the robot can run detection, tracking, ROI extraction, asynchronous intent inference, STOP-first safety behavior, and dataset logging. Phase 2 turns that foundation into a trainable and exportable temporal intent model. The main output is not only a checkpoint; it is a controlled dataset pipeline with review gates so the model can be retrained later without reintroducing noisy labels or legacy behavior.
 
-## Mục tiêu
-
-Nâng cấp perception pipeline: thêm temporal state stacking (k=3-5), cải thiện CNN với temporal aggregator, **thiết lập intent trajectory buffer per track_id** (chuẩn bị cho GAP #2 temporal intent reward ở Phase 3), và thiết lập gRPC + experience streaming tới Server.
+The phase must be treated as unfinished until the dataset manifest, validation report, trained checkpoint, calibration metadata, and export artifact all exist together and describe the same ontology.
 
 ---
 
-## Prerequisites (từ Phase 1)
+## 1. Phase Objectives
 
-| Requirement           | Cần từ Phase 1                                      | Status |
-| --------------------- | --------------------------------------------------- | ------ |
-| Data logging pipeline | Đang thu data đúng format, aligned timestamps       | ⬜     |
-| Temporal-ready state  | `ObservationSpace` với `temporal_stack_size` config | ⬜     |
-| YOLO + ByteTrack      | Stable detection + tracking                         | ⬜     |
-| ZMQ communication     | Jetson ↔ RasPi hoạt động ổn định                    | ⬜     |
-| Collected data        | ≥ 5,000 frames with detections                      | ⬜     |
+### 1.1 Primary objectives
 
----
+1. Build a standard ROI sequence dataset for human movement intent.
+2. Remove person-following behavior from the ontology and from all training assumptions.
+3. Use 15-frame temporal samples instead of single-frame snapshot samples.
+4. Train a lightweight Temporal Intent CNN that can run on the Jetson perception path.
+5. Add confidence calibration and abstention so low-quality predictions become `UNCERTAIN` instead of unsafe high-confidence labels.
+6. Keep `ERRATIC` under human review before it is allowed to influence training.
+7. Export a versioned model artifact with metadata that exactly matches runtime class mapping.
 
-## Deliverables
+### 1.2 Secondary objectives
 
-| #   | Deliverable                  | Mô tả                                             | Bottleneck |
-| --- | ---------------------------- | ------------------------------------------------- | ---------- |
-| D1  | Temporal State Stacking      | Observation stacking k=3-5                        | B1 ⚠️      |
-| D2  | CNN Temporal Upgrade         | Conv1D/GRU temporal aggregator                    | A1         |
-| D3  | CNN Training Pipeline        | Train CNN intent trên Server                      | A1         |
-| D4  | **Intent Trajectory Buffer** | Per-track intent history buffer — **GAP #2 prep** | —          |
-| D5  | gRPC Server (Jetson)         | Model deployment + experience streaming           | C2         |
-| D6  | gRPC Client (Server)         | Receive experiences, deploy models                | C2         |
-| D7  | Experience Streamer          | Async experience stream → Server                  | C1         |
-| D8  | Continual Learning Pipeline  | EWC + Replay Buffer cho CNN fine-tuning           | —          |
+1. Prepare the dataset for future continual learning from real logs.
+2. Keep the training pipeline reproducible from CLI commands.
+3. Add quality reports so dataset problems are visible before training.
+4. Establish a baseline for later TCN/GRU/LSTM experiments without changing the dataset contract again.
+5. Preserve compatibility with the observation vector shape used by downstream modules, while making the model API temporal-native.
 
----
+### 1.3 Non-goals
 
-## Task Breakdown
+Phase 2 does not implement autonomous person following. That behavior was removed deliberately. The robot may use human intent to slow, stop, avoid, or plan later, but it should not track and follow a person as a navigation objective.
 
-### 1. Temporal State Stacking (D1) ⚠️ CRITICAL
+Phase 2 does not train the final RL policy. It prepares perception outputs and temporal logs that Phase 3 can use for reward shaping and policy work.
 
-> ⚠️ **WARNING**
-> Đây là thời điểm kích hoạt temporal-ready design từ Phase 1. Thay đổi `temporal_stack_size: 1 → 3-5`.
-
-- [ ] Cập nhật `src/navigation/context_builder.py`:
-  - `temporal_stack_size` = 3 (default), configurable qua YAML
-  - `observation_history: deque(maxlen=temporal_stack_size)`
-  - Mỗi frame mới → push vào deque
-  - `get_stacked_observation()` returns concatenated array
-  - When deque chưa đầy → pad với zeros (cold start)
-
-- [ ] State versioning:
-  - `state_version: "v2-temporal-k3"` (update từ `"v1-snapshot"`)
-  - Metadata ghi rõ: `obs_dim = 102 * k`
-  - Backward-compatible: k=1 vẫn hoạt động
-
-- [ ] Update config:
-
-  ```yaml
-  # config/development.yaml
-  context:
-    temporal_stack_size: 3 # Phase 1: 1, Phase 2: 3-5
-    state_version: "v2-temporal-k3"
-  ```
-
-- [ ] Validation:
-  - Test observation shape: `(102 * k,)` = `(306,)` khi k=3
-  - Test cold-start behavior (deque chưa đầy)
-  - Test transition từ v1 → v2
-
-**Files**:
-
-```
-src/navigation/context_builder.py  (MODIFY)
-config/development.yaml            (MODIFY)
-config/production.yaml             (MODIFY)
-```
+Phase 2 does not claim that `UNCERTAIN` is a learned class. `UNCERTAIN` is an abstain/review state created by confidence gating, margin gating, and human-in-the-loop data handling.
 
 ---
 
-### 2. CNN Temporal Upgrade (D2)
+## 2. Current Decisions
 
-- [ ] Cập nhật `src/perception/intent_cnn.py`:
-  - **Temporal Aggregator**: Conv1D hoặc GRU over last 5 frames per track_id
-  - Architecture:
+### 2.1 Intent ontology
 
-  ```
-  Input: 5 × 128×256×3 (5 consecutive ROI frames cho cùng track_id)
-      │
-      ▼
-  MobileNetV3-Small backbone (shared weights, per-frame)
-      │ → 5 × feature_vector (576-dim)
-      │
-      ▼
-  Option A: Conv1D(576, 256, kernel=3) → ReLU → Pool
-  Option B: GRU(input=576, hidden=256, num_layers=1)
-      │
-      ▼
-  FC(256) → IntentHead(6) + DirectionHead(2)
-  ```
+The active ontology is:
 
-  - **Temporal buffer per track_id** (shared with D4 intent trajectory):
+| ID | Runtime Slot | Trainable | Meaning |
+| --- | --- | --- | --- |
+| 0 | `STATIONARY` | Yes | Person is approximately static relative to the robot/camera. |
+| 1 | `APPROACHING` | Yes | Person is moving toward the robot or depth is decreasing. |
+| 2 | `DEPARTING` | Yes | Person is moving away from the robot or depth is increasing. |
+| 3 | `CROSSING` | Yes | Person is moving laterally across the robot path. |
+| 4 | `ERRATIC` | Yes, after review | Person movement is unstable, abrupt, or difficult to predict. |
+| 5 | `UNCERTAIN` | No | Runtime abstain/review state for low-confidence or ambiguous samples. |
 
-    ```python
-    class TrackTemporalBuffer:
-        def __init__(self, max_tracks=10, temporal_window=5):
-            self.buffers: Dict[int, deque] = {}
-            # Mỗi track_id có riêng 1 deque(maxlen=5)
-    ```
+`FOLLOW` and `FOLLOWING` are removed from the active behavior model. Legacy samples with these labels must be treated as invalid for training and mapped into review/cleanup flow, not silently trained as a new behavior.
 
-  - When track_id mới → pad previous frames với current frame (duplicate)
-  - When track_id mất → cleanup buffer sau 30 frames
+### 2.2 Temporal API decision
 
-- [ ] Model export pipeline:
-  - PyTorch model → ONNX (opset 17)
-  - Batch input: `(batch_size, 5, 3, 128, 256)`
-  - Dynamic batch: `batch_size` = 1-5
+The model and dataset API are temporal-native:
 
-**Files**:
-
+```text
+Dataset sample image shape: (T, C, H, W)
+Batch model input shape:    (B, T, C, H, W)
+Default temporal window:    T = 15
+ROI size:                   256 x 128
+Channels:                   RGB, C = 3
 ```
-src/perception/intent_cnn.py       (MODIFY)
-src/perception/temporal_buffer.py  (NEW)
+
+Even if `temporal_window=1` is used for debugging, the dataset must return `(1, C, H, W)`. The old snapshot API `(C, H, W)` or `(B, C, H, W)` is not supported in the intent path.
+
+### 2.3 Model decision
+
+The phase-2 baseline model is:
+
+```text
+15 ROI frames per track
+  -> shared MobileNetV3-Small frame encoder
+  -> temporal Conv1D head
+  -> intent classification head
+  -> direction regression head
+  -> temperature softmax
+  -> confidence/margin abstain gate
+```
+
+This is a Temporal Intent CNN, not a pure TCN and not a single-frame CNN. The temporal Conv1D head is intentionally lightweight for the first exportable baseline. A deeper dilated TCN, GRU, or LSTM can be evaluated later using the same dataset contract.
+
+### 2.4 Review decision
+
+`UNCERTAIN` and `ERRATIC` must be visible to humans:
+
+- `UNCERTAIN` is excluded from training.
+- `ERRATIC` is blocked from training until reviewed.
+- The review queue stores images and metadata so the operator can confirm, correct, or reject samples.
+- Dataset validation must fail if pending `ERRATIC` review exists.
+
+### 2.5 Split decision
+
+Train/validation split must happen by `track_uid`, not by random image. A single person track must not leak across train and validation splits because temporal samples from the same track are highly correlated.
+
+---
+
+## 3. Phase Inputs and Outputs
+
+### 3.1 Inputs from Phase 1
+
+| Input | Source | Required for Phase 2 |
+| --- | --- | --- |
+| ROI images | `ROISaver` / Jetson runtime | Training image data |
+| `metadata.jsonl` | ROI logging sidecar | Track, frame, bounding box, depth, velocity, and timestamp fields |
+| Tracker IDs | ByteTrack | Temporal grouping |
+| Depth or depth proxy | RealSense or bbox fallback | Auto-label approach/depart decision |
+| Robot ego-motion | runtime metadata | Compensation for robot movement |
+| Runtime configs | `config/*.yaml` | Temporal window, thresholds, model path |
+
+### 3.2 Phase outputs
+
+| Output | Location | Purpose |
+| --- | --- | --- |
+| Labeled ROI dataset | `intent_dataset/<CLASS>/...` | Trainable image sequences |
+| Dataset metadata | `intent_dataset/metadata.jsonl` | One metadata row per ROI image |
+| Review queue | `intent_dataset/review_queue/` | Human review for uncertain/risky samples |
+| Dataset report | `intent_dataset/reports/*.json` | Explore and validation artifact |
+| Dataset manifest | `intent_dataset/manifest.json` | Phase-2 gate artifact |
+| Checkpoint | `models/cnn_intent/intent_v1.pt` | Trainable PyTorch checkpoint |
+| Exported artifact | TorchScript + metadata sidecar | Runtime deployable model |
+| Calibration metadata | checkpoint/export metadata | Temperature, thresholds, class map |
+
+---
+
+## 4. Dataset Layout
+
+### 4.1 Raw ROI collection layout
+
+Raw collection is session-oriented. A session contains many ROI images and one sidecar metadata file:
+
+```text
+roi_dataset/
+└── session_2026_05_01_001/
+    ├── roi_t1_f000015.jpg
+    ├── roi_t1_f000030.jpg
+    ├── roi_t2_f000045.jpg
+    └── metadata.jsonl
+```
+
+Each JSONL row maps to one ROI image:
+
+```json
+{"file":"roi_t1_f000015.jpg","track_id":1,"frame_id":15,"cx":320.5,"cy":210.0,"bw":62.0,"bh":180.0,"dist_mm":2150.0,"timestamp":1777580000.123}
+```
+
+### 4.2 Labeled dataset layout
+
+After auto-labeling and manual import:
+
+```text
+intent_dataset/
+├── STATIONARY/
+├── APPROACHING/
+├── DEPARTING/
+├── CROSSING/
+├── ERRATIC/
+├── UNCERTAIN/
+├── review_queue/
+│   ├── ERRATIC/
+│   ├── UNCERTAIN/
+│   └── metadata.jsonl
+├── reports/
+├── metadata.jsonl
+├── imported_metadata.jsonl
+└── manifest.json
+```
+
+`metadata.jsonl` is the main sidecar generated by auto-labeling. `imported_metadata.jsonl` is reserved for manual import tooling so concurrent import and auto-label jobs do not append to the same file.
+
+### 4.3 Metadata contract
+
+The dataset sidecar must preserve enough information to rebuild temporal sequences and diagnose labels:
+
+| Field | Required | Purpose |
+| --- | --- | --- |
+| `file` | Yes | Relative path to ROI image |
+| `label` / `intent` | Yes | Assigned class |
+| `track_id` | Yes | Tracker ID within session |
+| `track_uid` | Yes | Stable split key across sessions |
+| `frame_id` | Yes | Temporal ordering |
+| `timestamp` | Recommended | `dt` calculation and audit |
+| `cx`, `cy`, `bw`, `bh` | Recommended | Crossing, bbox depth proxy, quality analysis |
+| `dist_mm` | Recommended | Approach/depart labels |
+| `review_required` | Yes for review classes | Human-in-the-loop gate |
+| `review_status` | Yes for review classes | `pending`, `approved`, `rejected`, or corrected label |
+| `autolabel_reason` | Recommended | Debuggable label provenance |
+
+---
+
+## 5. End-to-End Workflow
+
+### 5.1 Step A - Collect ROI sequences
+
+Run the robot in a controlled environment with realistic pedestrian movement:
+
+1. Person standing still.
+2. Person approaching the robot.
+3. Person departing from the robot.
+4. Person crossing left-to-right and right-to-left.
+5. Person moving irregularly, stopping suddenly, or changing direction.
+6. Background scenes without relevant movement, to test false positives and low-confidence outputs.
+
+The collection must keep `track_id`, `frame_id`, timestamp, bounding box, and depth information. Short clips are allowed, but phase-2 quality gates should favor tracks long enough to create several 15-frame temporal samples.
+
+### 5.2 Step B - Auto-label raw ROI data
+
+Auto-labeling groups frames by track and estimates motion using:
+
+- depth change over time,
+- lateral center movement over time,
+- bounding-box fallback when real depth is missing,
+- focal-length scaling based on frame width,
+- ego-motion compensation from robot velocity,
+- sliding-window stability checks.
+
+Expected command:
+
+```bash
+python scripts/data/auto_watcher.py --watch roi_dataset --output intent_dataset
+```
+
+Manual single-batch equivalent:
+
+```bash
+python scripts/data/autolabel.py --input roi_dataset/session_2026_05_01_001 --output intent_dataset
+```
+
+### 5.3 Step C - Human review
+
+Review must happen before training if there are pending `ERRATIC` samples. `UNCERTAIN` samples can remain out of training, but they should still be inspected because they reveal dataset gaps.
+
+Review actions:
+
+| Action | Meaning |
+| --- | --- |
+| approve `ERRATIC` | Sample can be used for `ERRATIC` training |
+| relabel | Sample is moved to one of the trainable classes |
+| reject | Sample stays excluded from training |
+| keep `UNCERTAIN` | Sample remains an abstain/review example, not a train example |
+
+The review process should update metadata, not only move images. Training decisions must be derived from metadata gates.
+
+### 5.4 Step D - Explore dataset
+
+Run:
+
+```bash
+python scripts/data/explore_roi.py --dataset intent_dataset --output intent_dataset
+```
+
+The report must answer:
+
+1. How many samples exist per class?
+2. How many unique tracks exist per class?
+3. How many short tracks exist?
+4. How many samples lack sidecar metadata?
+5. How many review-pending samples exist by class?
+6. Is there obvious class imbalance?
+7. Are there duplicate or missing image references?
+
+### 5.5 Step E - Validate dataset
+
+Run:
+
+```bash
+python scripts/data/validate_dataset.py intent_dataset/reports/<latest>.json
+```
+
+Validation should block or warn on:
+
+- pending `ERRATIC` review,
+- old reports missing review-gate fields,
+- legacy `FOLLOW` / `FOLLOWING` labels,
+- too few trainable samples,
+- class imbalance,
+- missing metadata,
+- too few tracks for track-level split.
+
+### 5.6 Step F - Build manifest
+
+Run:
+
+```bash
+python scripts/data/build_intent_manifest.py --dataset intent_dataset --temporal-window 15
+```
+
+The manifest is the official phase-2 dataset gate artifact. Training can be attempted during development before the manifest is perfect, but export approval should require the manifest to pass.
+
+### 5.7 Step G - Train
+
+Run:
+
+```bash
+python scripts/train/train_intent_cnn.py --dataset intent_dataset --temporal-window 15
+```
+
+Training requirements:
+
+- only train on 5 trainable classes,
+- exclude `UNCERTAIN`,
+- block unreviewed `ERRATIC`,
+- split by `track_uid`,
+- keep temporal sequence padding deterministic,
+- log per-class metrics,
+- save class map, temporal window, threshold config, and calibration metadata.
+
+### 5.8 Step H - Calibrate confidence
+
+Calibration must be fitted on validation logits. The scalar temperature is saved with the checkpoint and exported artifact.
+
+Runtime prediction flow:
+
+```text
+logits -> temperature scaling -> softmax over 5 trainable classes
+      -> append runtime UNCERTAIN slot
+      -> confidence + margin gate
+      -> final 6-slot probability vector
+```
+
+If the prediction abstains to `UNCERTAIN`, runtime confidence should represent navigational confidence and must be `0.0`, not the probability mass assigned to the `UNCERTAIN` slot.
+
+### 5.9 Step I - Export
+
+Run:
+
+```bash
+python scripts/deploy/export_intent_model.py --checkpoint models/cnn_intent/intent_v1.pt
+```
+
+Export must include:
+
+- TorchScript model,
+- class names,
+- class IDs,
+- temporal window,
+- ROI shape,
+- calibration temperature,
+- confidence threshold,
+- margin threshold,
+- training version,
+- dataset manifest hash or path if available.
+
+---
+
+## 6. Milestones
+
+### M0 - Phase-2 readiness check
+
+| Task | Done Criteria |
+| --- | --- |
+| Confirm ontology | No active `FOLLOW` or `FOLLOWING` training labels |
+| Confirm temporal API | Runtime and training reject snapshot tensors |
+| Confirm logging | ROI images and sidecar metadata are written |
+| Confirm review queue | `ERRATIC` and `UNCERTAIN` can be routed to review |
+| Confirm docs | Phase 2 plan, guide, and design docs describe the same flow |
+
+### M1 - Dataset collection baseline
+
+| Task | Done Criteria |
+| --- | --- |
+| Collect first sessions | At least one session per intent scenario |
+| Verify metadata | `metadata.jsonl` has file, track, frame, bbox, and timestamp fields |
+| Check sequence length | Tracks are long enough to produce meaningful 15-frame samples |
+| Check device logs | No repeated ROI extraction failures |
+
+### M2 - Auto-label and review loop
+
+| Task | Done Criteria |
+| --- | --- |
+| Run auto-label | All raw sessions converted into labeled dataset folders |
+| Inspect class distribution | Report exists and shows non-empty trainable classes |
+| Review risky samples | Pending `ERRATIC` count is zero before train approval |
+| Preserve uncertain samples | `UNCERTAIN` remains excluded from trainable set |
+
+### M3 - Dataset gate
+
+| Task | Done Criteria |
+| --- | --- |
+| Explore report | Latest report generated after final review pass |
+| Validate report | No blocking validation failures |
+| Build manifest | `manifest.json` exists and records `temporal_window=15` |
+| Audit split keys | At least 2 distinct `track_uid` values; target is many more |
+
+### M4 - Baseline training
+
+| Task | Done Criteria |
+| --- | --- |
+| Train model | Checkpoint created successfully |
+| Validation metrics | Per-class precision/recall/F1 logged |
+| Calibration | Temperature fitted and saved |
+| Failure cases | Confusion matrix inspected for `CROSSING` and `ERRATIC` |
+
+### M5 - Export and runtime smoke test
+
+| Task | Done Criteria |
+| --- | --- |
+| Export artifact | TorchScript + metadata sidecar created |
+| Load artifact | Runtime loader accepts artifact and class map |
+| Shape test | Model accepts `(B,15,3,256,128)` only |
+| Abstain test | Low confidence becomes `UNCERTAIN` with confidence `0.0` |
+| Jetson smoke test | Inference loop runs without blocking camera pipeline |
+
+### M6 - Phase-2 completion
+
+Phase 2 can be considered complete only when:
+
+1. Dataset manifest passes quality gates.
+2. No pending `ERRATIC` review remains.
+3. A trained checkpoint exists with 5 trainable classes.
+4. Calibration metadata exists.
+5. Exported runtime artifact loads successfully.
+6. Runtime confidence and abstain behavior are verified.
+7. Documentation and report are updated to match the actual model and dataset flow.
+
+---
+
+## 7. Quality Gates
+
+### 7.1 Blocking gates
+
+| Gate | Rule | Reason |
+| --- | --- | --- |
+| Ontology | `FOLLOW` and `FOLLOWING` count must be zero | Removed behavior must not return through training data |
+| Review | Pending `ERRATIC` review must be zero | High-risk labels need human confirmation |
+| Metadata | Missing sidecar metadata must be investigated | Track split and crossing labels depend on metadata |
+| Temporal | Dataset must support 15-frame samples | Phase 2 is temporal, not snapshot |
+| Split | At least 2 distinct tracks | Prevent invalid train/val split |
+| Export metadata | Artifact must include class map and temporal window | Runtime must interpret logits correctly |
+
+### 7.2 Warning gates
+
+| Gate | Warning Condition | Action |
+| --- | --- | --- |
+| Sample count | Fewer than 500 trainable images | Continue only for smoke test, not final export |
+| Class imbalance | One class dominates dataset | Collect or review underrepresented classes |
+| Short tracks | Many tracks shorter than 15 frames | Collect longer clips |
+| Old report | Report lacks review gate fields | Re-run `explore_roi.py` |
+| Bbox depth proxy | Many labels rely on bbox fallback | Treat approach/depart labels as lower confidence |
+
+### 7.3 Target dataset size
+
+The minimum gate can be low for engineering smoke tests, but the target for first serious training should be:
+
+| Class | Target Tracks | Target Images |
+| --- | ---: | ---: |
+| `STATIONARY` | 20+ | 1,000+ |
+| `APPROACHING` | 20+ | 1,000+ |
+| `DEPARTING` | 20+ | 1,000+ |
+| `CROSSING` | 30+ | 1,500+ |
+| `ERRATIC` | 10+ reviewed | 300+ reviewed |
+
+`ERRATIC` is naturally rarer, so precision and review quality matter more than raw count.
+
+---
+
+## 8. Training Plan
+
+### 8.1 Baseline run
+
+The first run should establish whether the dataset is usable:
+
+```bash
+python scripts/train/train_intent_cnn.py ^
+  --dataset intent_dataset ^
+  --temporal-window 15 ^
+  --epochs 10 ^
+  --batch-size 16
+```
+
+Expected result:
+
+- checkpoint is produced,
+- validation does not crash,
+- per-class metrics are logged,
+- `UNCERTAIN` is absent from train labels,
+- class map matches `intent_labels.py`.
+
+### 8.2 First production candidate
+
+After dataset gate passes:
+
+```bash
+python scripts/train/train_intent_cnn.py ^
+  --dataset intent_dataset ^
+  --temporal-window 15 ^
+  --epochs 50 ^
+  --batch-size 32
+```
+
+Tune batch size based on GPU memory. If validation for `CROSSING` or `ERRATIC` is unstable, collect more data before changing the architecture.
+
+### 8.3 Metrics to record
+
+| Metric | Required | Notes |
+| --- | --- | --- |
+| Accuracy | Yes | Useful but not sufficient |
+| Per-class precision | Yes | Especially `ERRATIC` and `CROSSING` |
+| Per-class recall | Yes | Avoid missing risky movement |
+| F1-score | Yes | Compare class balance |
+| Confusion matrix | Yes | Identify systematic class confusion |
+| Abstain rate | Yes | Runtime quality indicator |
+| Calibration error | Recommended | Needed before trust in confidence |
+| Jetson latency | Required before deploy | Must not block perception loop |
+
+### 8.4 Expected confusion risks
+
+| Confusion | Likely Cause | Mitigation |
+| --- | --- | --- |
+| `STATIONARY` vs slow `CROSSING` | Lateral motion below threshold | Collect slow crossing examples |
+| `APPROACHING` vs camera motion | Ego-motion compensation wrong or missing | Verify robot velocity metadata |
+| `DEPARTING` vs bbox shrink noise | Depth unavailable | Prefer depth sensors or mark bbox-proxy samples |
+| `ERRATIC` vs noisy track | Tracker jitter | Review queue and tracker quality filters |
+| `UNCERTAIN` too frequent | Threshold too strict or dataset weak | Calibrate threshold after validation |
+
+---
+
+## 9. Runtime Integration Plan
+
+### 9.1 Runtime prediction contract
+
+At runtime the intent model receives per-track ROI history. If a track has fewer than 15 frames, history is left-padded with the earliest available ROI so the model still receives a fixed temporal tensor.
+
+```text
+track_id -> deque(maxlen=15) -> sequence tensor -> model -> calibrated prediction
+```
+
+### 9.2 Output contract
+
+Each prediction should include:
+
+| Field | Meaning |
+| --- | --- |
+| `track_id` | Person track |
+| `intent_class` | Runtime ID 0-5 |
+| `intent_name` | Human-readable class name |
+| `probabilities` | 6-slot runtime vector |
+| `confidence` | Navigational confidence, `0.0` on abstain |
+| `direction` | Estimated motion direction `(dx, dy)` |
+| `review_required` | True for `ERRATIC` or abstained uncertain cases |
+
+### 9.3 Runtime safety policy
+
+Phase 2 should not directly add aggressive navigation behavior. Intent output should be consumed conservatively:
+
+- `ERRATIC`: force STOP or high caution.
+- `CROSSING`: reduce speed or stop depending on distance.
+- `APPROACHING`: increase caution if distance is decreasing.
+- `UNCERTAIN`: treat as low-confidence and avoid relying on intent for positive motion.
+- `STATIONARY` / `DEPARTING`: allow normal obstacle-aware logic, not blind acceleration.
+
+---
+
+## 10. Optimization Roadmap
+
+### 10.1 Calibration
+
+Calibration is part of Phase 2, not a later optional feature. A model with poor confidence is unsafe even if top-1 accuracy looks acceptable.
+
+Implementation expectations:
+
+- fit scalar temperature on validation logits,
+- store temperature in checkpoint,
+- store thresholds in metadata,
+- test abstain path,
+- set abstain confidence to `0.0`.
+
+### 10.2 Quantization
+
+Quantization should happen after the baseline model is correct. Dynamic quantization can be tested first for CPU paths:
+
+```bash
+python scripts/deploy/export_intent_model.py ^
+  --checkpoint models/cnn_intent/intent_v1.pt ^
+  --quantize-dynamic
+```
+
+For Jetson GPU deployment, TensorRT/ONNX optimization can be evaluated later, but the first phase-2 artifact can remain TorchScript if latency is acceptable.
+
+### 10.3 Distillation
+
+Distillation is a future acceleration and robustness path:
+
+1. Train a larger teacher on the same temporal dataset.
+2. Train the MobileNetV3 + Conv1D student with hard labels and teacher logits.
+3. Compare student accuracy, abstain rate, and latency.
+
+Distillation should not be introduced before the dataset gate is stable, because it can hide label noise rather than fix it.
+
+### 10.4 Continual learning
+
+Continual learning must be controlled:
+
+- only reviewed real-log samples can enter training,
+- replay buffer must preserve old classes,
+- EWC can reduce catastrophic forgetting,
+- each new training run must produce a new manifest/checkpoint pair,
+- no model should overwrite the current runtime artifact without validation.
+
+---
+
+## 11. Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+| Noisy auto-labels | Model learns wrong motion classes | Human review queue, validation report, conservative thresholds |
+| Class imbalance | Poor recall on rare risky classes | Targeted collection for `CROSSING` and `ERRATIC` |
+| Tracker ID switches | Temporal sequences mix people | Track-level audit, short-track warnings |
+| Missing depth | Approach/depart labels become weak | Mark bbox proxy samples and collect depth-backed data |
+| Overconfident wrong predictions | Unsafe downstream behavior | Temperature calibration and abstain gate |
+| Dataset leakage | Inflated validation metrics | Split by `track_uid` |
+| Latency on Jetson | Perception loop stalls | Async inference, lightweight head, quantization path |
+| Legacy labels return | FOLLOW behavior reappears | Ontology gate blocks `FOLLOW` / `FOLLOWING` |
+
+---
+
+## 12. Detailed Checklist
+
+### Dataset checklist
+
+- [ ] Raw sessions collected for all five trainable classes.
+- [ ] Every raw session has `metadata.jsonl`.
+- [ ] Metadata includes `track_id` and `frame_id`.
+- [ ] Track UID generation is stable.
+- [ ] Auto-label completes without missing-file errors.
+- [ ] `FOLLOW` and `FOLLOWING` do not appear in output labels.
+- [ ] `UNCERTAIN` exists only as abstain/review data.
+- [ ] `ERRATIC` pending review is zero before approved training.
+- [ ] `review_queue/metadata.jsonl` has no duplicate rows for repeated runs.
+- [ ] Manual imports write to `imported_metadata.jsonl`.
+
+### Training checklist
+
+- [ ] `ROIDataset` returns `(T,C,H,W)`.
+- [ ] DataLoader batches are `(B,T,C,H,W)`.
+- [ ] `temporal_window=15` is used consistently.
+- [ ] `UNCERTAIN` is excluded from trainable labels.
+- [ ] Split is by `track_uid`.
+- [ ] Class weights or imbalance strategy are recorded.
+- [ ] Checkpoint includes class map and temporal metadata.
+- [ ] Calibration temperature is saved.
+
+### Export checklist
+
+- [ ] Export command succeeds.
+- [ ] Metadata sidecar exists.
+- [ ] Runtime class map has 6 slots with `UNCERTAIN`.
+- [ ] Model artifact rejects snapshot input.
+- [ ] Low-confidence output becomes `UNCERTAIN`.
+- [ ] Abstain confidence is `0.0`.
+- [ ] Artifact path is updated in config only after smoke test.
+
+### Documentation checklist
+
+- [ ] Phase 2 plan matches actual ontology.
+- [ ] System design describes Temporal Intent CNN, not snapshot CNN.
+- [ ] Guides explain dataset, review, train, export commands.
+- [ ] Report uses one consistent name: Temporal Intent CNN.
+- [ ] No active docs describe person following as a current behavior.
+
+---
+
+## 13. Command Reference
+
+### Full dataset gate sequence
+
+```bash
+python scripts/data/auto_watcher.py --watch roi_dataset --output intent_dataset
+python scripts/data/explore_roi.py --dataset intent_dataset --output intent_dataset
+python scripts/data/validate_dataset.py intent_dataset/reports/<latest>.json
+python scripts/data/build_intent_manifest.py --dataset intent_dataset --temporal-window 15
+```
+
+### Manual import sequence
+
+```bash
+python scripts/data/import_labels.py --input reviewed_labels --output intent_dataset
+python scripts/data/explore_roi.py --dataset intent_dataset --output intent_dataset
+python scripts/data/validate_dataset.py intent_dataset/reports/<latest>.json
+```
+
+### Training sequence
+
+```bash
+python scripts/train/train_intent_cnn.py --dataset intent_dataset --temporal-window 15
+```
+
+### Export sequence
+
+```bash
+python scripts/deploy/export_intent_model.py --checkpoint models/cnn_intent/intent_v1.pt
+```
+
+### Verification sequence
+
+```bash
+python -m ruff check src scripts tests
+python -m pytest -q
 ```
 
 ---
 
-### 3. Intent Trajectory Buffer — GAP #2 Prep (D4)
-
-> **GAP #2**: Phase 3 sẽ dùng `R_intent = Σ γ^i · risk(intent_{t+i})` với k=5 frames.
-> Phase 2 cần **log intent trajectory per track_id** để có data cho reward shaping.
-
-- [ ] `src/perception/intent_trajectory.py` (NEW):
-
-  ```python
-  class IntentTrajectoryTracker:
-      """Maintains intent history per tracked person.
-
-      Used in Phase 2 for logging, in Phase 3 for temporal reward.
-      """
-      def __init__(self, window_size: int = 5, max_tracks: int = 10):
-          self.trajectories: Dict[int, deque] = {}  # track_id → deque
-          self.window_size = window_size
-
-      def update(self, track_id: int, intent_class: int, confidence: float):
-          if track_id not in self.trajectories:
-              self.trajectories[track_id] = deque(maxlen=self.window_size)
-          self.trajectories[track_id].append(IntentPrediction(
-              intent_class=intent_class,
-              confidence=confidence,
-              timestamp=time.monotonic(),
-          ))
-
-      def get_trajectory(self, track_id: int) -> List[IntentPrediction]:
-          return list(self.trajectories.get(track_id, []))
-
-      def cleanup_stale(self, active_track_ids: Set[int]):
-          stale = set(self.trajectories.keys()) - active_track_ids
-          for tid in stale:
-              del self.trajectories[tid]
-  ```
-
-- [ ] Integrate into main pipeline:
-  - After CNN predicts intent → `tracker.update(track_id, intent_class, conf)`
-  - Include `intent_trajectory` in experience frame for logging
-  - Log to HDF5: `intent_trajectories` field per frame
-
-**Files**:
-
-```
-src/perception/intent_trajectory.py   (NEW)
-src/main.py                           (MODIFY — integrate tracker)
-```
-
----
-
-### 4. CNN Training Pipeline — Server Side (D3)
-
-- [ ] `training/train_cnn.py`:
-  - Dataset: ROIs thu từ Phase 1 data logging
-  - Labeling workflow:
-    1. **Auto-label** với VLM (Gemma 4): send ROI → ask intent → get label
-    2. **Human verify**: review VLM labels, correct mistakes
-    3. **Export**: labeled dataset → PyTorch Dataset
-  - Training config:
-
-    ```yaml
-    # training/configs/cnn_config.yaml
-    model:
-      backbone: mobilenetv3_small
-      temporal_window: 5
-      num_intent_classes: 6
-      pretrained: true
-      freeze_backbone_blocks: 3 # Freeze first 3 blocks
-
-    training:
-      epochs: 50
-      batch_size: 32
-      learning_rate: 1e-3
-      weight_decay: 1e-4
-      scheduler: cosine_annealing
-
-    loss:
-      intent: cross_entropy # weight: 0.7
-      direction: mse # weight: 0.3
-
-    augmentation:
-      color_jitter: true
-      random_crop: true
-      horizontal_flip: true
-      random_occlusion: true # Simulate partial occlusion
-    ```
-
-  - Train / Val / Test split: 70% / 15% / 15%
-  - Metric tracking: accuracy, F1-score per class, confusion matrix
-
-- [ ] `training/vlm_labeler.py`:
-  - Sử dụng Gemma 4 (Ollama) để auto-label ROI images
-  - Prompt: "What is this person's movement intent? [STATIONARY/APPROACHING/DEPARTING/CROSSING/FOLLOWING/ERRATIC]"
-  - Output: intent label + confidence
-  - Batch processing: ~500-1000 images/hour
-
-- [ ] `training/export_model.py`:
-  - PyTorch → ONNX (opset 17)
-  - Validate ONNX model with `onnxruntime`
-  - (TensorRT build sẽ thực hiện trên Jetson)
-
-**Ref**: system-design.md Section 5.4
-
-**Files**:
-
-```
-training/train_cnn.py              (NEW)
-training/vlm_labeler.py            (NEW)
-training/export_model.py           (NEW/MODIFY)
-training/configs/cnn_config.yaml   (NEW/MODIFY)
-training/dataset/                  (NEW dir)
-```
-
----
-
-### 4. gRPC Server — Jetson Side (D4)
-
-- [ ] `src/communication/grpc_server.py`:
-  - Service: `ModelDeployer` (Laptop → Jetson)
-    - `DeployModel(ModelArtifact)` → receive ONNX, build TensorRT, hot-reload
-    - `GetActiveModels(Empty)` → return danh sách models đang chạy
-    - `RollbackModel(RollbackRequest)` → rollback về version trước
-  - Port: `50051`
-  - Async handler: model build chạy background thread
-  - Security: basic token authentication
-
-- [ ] `src/models/converter.py`:
-  - ONNX → TensorRT `.engine` conversion
-  - FP16 quantization
-  - TensorRT workspace: 256MB max
-  - Timeout: 5 phút max cho build
-
-- [ ] `src/models/version_manager.py`:
-  - Track active model versions
-  - Keep last 2 versions cho rollback
-  - `active_models.json` update
-
-- [ ] `src/models/loader.py`:
-  - Load TensorRT `.engine` files
-  - Atomic swap khi hot-reload (< 33ms gap)
-
-**Ref**: system-design.md Section 7.4, 11.1, 11.2
-
-**Files**:
-
-```
-src/communication/grpc_server.py   (NEW)
-src/models/__init__.py             (NEW)
-src/models/converter.py            (NEW)
-src/models/version_manager.py      (NEW)
-src/models/loader.py               (NEW)
-```
-
----
-
-### 6. Experience Streamer — Jetson → Server (D7)
-
-- [ ] `src/experience/streamer.py`:
-  - gRPC client: stream `ExperienceFrame` tới Laptop
-  - Data per frame:
-    - `camera_frame_jpeg`: JPEG bytes (quality 85)
-    - `detections`: Protobuf list
-    - `observation`: flattened float array
-    - `action`: action taken
-    - `timestamp`: precise timestamp
-  - Async streaming: non-blocking, does NOT affect inference loop
-  - Batch mode: collect N frames → send batch (reduce overhead)
-  - Error handling: retry with exponential backoff, drop if disconnected
-
-- [ ] `src/communication/grpc_client.py`:
-  - gRPC client wrapper cho experience streaming
-  - Connection management: auto-reconnect
-  - Health check: ping Laptop trước khi stream
-
-- [ ] Laptop-side receiver (chuẩn bị cho Phase 3):
-  - `training/experience_receiver.py`:
-    - gRPC server trên Laptop
-    - Receive experiences → store to disk
-    - Format: HDF5 hoặc Parquet files
-    - Organize by session/timestamp
-
-**Ref**: system-design.md Section 7.4
-
-**Files**:
-
-```
-src/experience/streamer.py             (NEW)
-src/communication/grpc_client.py       (NEW)
-training/experience_receiver.py        (NEW)
-```
-
----
-
-### 6. Update Main Pipeline
-
-- [ ] `src/main.py` — Thêm:
-  - gRPC server thread (model deployment)
-  - Experience streamer thread (async upload)
-  - Temporal buffer integration
-  - Config reload support
-
-- [ ] Updated pipeline flow:
-  ```
-  while running:
-      1. Camera grab frame
-      2. YOLO detection
-      3. ByteTrack update
-      4. ROI extraction
-      5. CNN intent (NOW with temporal buffer)
-      6. Context state build (NOW with k=3-5 stacking)
-      7. Heuristic policy decision (vẫn rule-based, RL ở Phase 3)
-      8. Safety monitor check
-      9. ZMQ publish NavigationCommand
-      10. Data logging (async)
-      11. Experience streaming to Laptop (async, NEW)
-  ```
-
-**Files**:
-
-```
-src/main.py  (MODIFY)
-```
-
----
-
-### 7. Testing
-
-- [ ] `tests/test_temporal_state.py`:
-  - Observation shape khi k=1, k=3, k=5
-  - Cold-start padding behavior
-  - State version compatibility
-
-- [ ] `tests/test_cnn_temporal.py`:
-  - Temporal buffer per track_id
-  - Track creation/cleanup
-  - Forward pass shape: (batch, 5, 3, 128, 256) → (batch, 6+2)
-
-- [ ] `tests/test_grpc.py`:
-  - Model deployment round-trip
-  - Experience streaming throughput
-  - Connection recovery
-
-- [ ] `tests/test_export.py`:
-  - PyTorch → ONNX export correctness
-  - ONNX validation with onnxruntime
-
-**Files**:
-
-```
-tests/test_temporal_state.py     (NEW)
-tests/test_cnn_temporal.py       (NEW)
-tests/test_grpc.py               (NEW)
-tests/test_export.py             (NEW)
-```
-
----
-
-## Verification Checklist
-
-### Functional Tests
-
-| #   | Test              | Criteria                                              | Status |
-| --- | ----------------- | ----------------------------------------------------- | ------ |
-| V1  | Temporal stacking | Observation shape = (102\*k,)                         | ⬜     |
-| V2  | Cold start        | Padded correctly when deque not full                  | ⬜     |
-| V3  | CNN temporal      | Forward pass with 5-frame input works                 | ⬜     |
-| V4  | Track buffer      | Tracks maintain independent buffers                   | ⬜     |
-| V5  | VLM labeling      | Gemma 4 labels ROIs correctly (>80% agree with human) | ⬜     |
-| V6  | CNN training      | Converges on test dataset, accuracy >70%              | ⬜     |
-| V7  | ONNX export       | Valid ONNX, inference matches PyTorch                 | ⬜     |
-| V8  | gRPC deploy       | Send ONNX → Jetson builds TensorRT                    | ⬜     |
-| V9  | Hot-reload        | Model swap < 33ms gap                                 | ⬜     |
-| V10 | Experience stream | Laptop receives complete frames                       | ⬜     |
-| V11 | Stream throughput | ≥ 10 frames/s over WiFi                               | ⬜     |
-
-### Performance (Jetson)
-
-| Metric                        | Target           | Status |
-| ----------------------------- | ---------------- | ------ |
-| Pipeline FPS (with temporal)  | ≥ 25 FPS         | ⬜     |
-| CNN latency (temporal)        | < 8ms per person | ⬜     |
-| gRPC overhead                 | < 5% CPU         | ⬜     |
-| Memory (with gRPC + temporal) | < 4.0 GB         | ⬜     |
-
----
-
-## Phase 2 → Phase 3 Handoff
-
-Khi HOÀN THÀNH Phase 2, Phase 3 cần:
-
-1. ✅ Temporal state hoạt động → RL observation space đã final
-2. ✅ CNN trained & deployed → intent predictions có ý nghĩa
-3. ✅ **Intent trajectory buffer** → sẵn sàng cho GAP #2 temporal reward
-4. ✅ gRPC server → nhận RL model từ Server
-5. ✅ Experience streaming → data pipeline cho RL training
-6. ✅ Collected experiences → sẵn sàng cho VLM evaluation + SAC training
-7. ✅ Continual learning pipeline (EWC + Replay) → CNN fine-tuning automated
-
----
-
-## Risk Register (Phase 2)
-
-| Risk                                   | Probability | Impact | Mitigation                                               |
-| -------------------------------------- | ----------- | ------ | -------------------------------------------------------- |
-| CNN temporal model quá nặng cho Jetson | Low         | High   | Benchmark trước. Fallback: chỉ dùng Conv1D (nhẹ hơn GRU) |
-| VLM auto-labeling quality thấp         | Medium      | Medium | Human verify 100% initially, giảm dần khi VLM consistent |
-| gRPC streaming unstable qua WiFi       | Medium      | High   | Retry logic, batch mode, test với Ethernet trước         |
-| TensorRT build timeout                 | Low         | Medium | Increase workspace, pre-build trên Jetson cùng JetPack   |
-| Not enough data from Phase 1           | Medium      | High   | Chạy Phase 1 thêm 1 tuần nếu cần, hoặc augment data      |
+## 14. Phase Exit Criteria
+
+Phase 2 is complete when the following are true:
+
+1. `intent_dataset/manifest.json` exists and records `temporal_window=15`.
+2. Dataset validation has no blocking failures.
+3. `ERRATIC` pending review count is zero.
+4. The trained model uses exactly five trainable logits.
+5. Runtime output exposes six slots including `UNCERTAIN`.
+6. The exported artifact contains ontology and calibration metadata.
+7. The Jetson runtime can load the model and run temporal inference asynchronously.
+8. The system remains STOP-first for uncertain or high-risk intent.
+9. Docs and report describe the same model, dataset, and deployment flow.
+
+After these criteria pass, Phase 3 can start using intent trajectories for reward shaping and policy training.

@@ -10,7 +10,7 @@ enum NavigationMode {
   CRUISE   = 0;
   CAUTIOUS = 1;
   AVOID    = 2;
-  FOLLOW   = 3;
+  RESERVED = 3;
   STOP     = 4;
 }
 
@@ -19,8 +19,8 @@ enum IntentClass {
   APPROACHING = 1;
   DEPARTING   = 2;
   CROSSING    = 3;
-  FOLLOWING   = 4;
-  ERRATIC     = 5;
+  ERRATIC     = 4;
+  UNCERTAIN   = 5;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -31,7 +31,7 @@ message NavigationCommand {
   NavigationMode mode         = 1;
   float velocity_scale        = 2;  // [0.0, 1.0]
   float heading_offset        = 3;  // radians [-π/4, π/4]
-  int32 follow_target_id      = 4;  // track_id, -1 = none
+  int32 reserved_target_id    = 4;  // kept as -1 for wire compatibility
   double timestamp            = 5;
   float confidence            = 6;  // policy confidence [0, 1]
   bool safety_override        = 7;  // true if safety monitor changed original cmd
@@ -56,6 +56,10 @@ message DetectionList {
   double timestamp              = 2;
   int32  frame_id               = 3;
   float  free_space_ratio       = 4;
+  repeated float free_sectors   = 5;
+  float navigable_heading       = 6;
+  float navigable_width         = 7;
+  float freespace_processing_ms = 8;
 }
 
 // ═══════════════════════════════════════════════════════

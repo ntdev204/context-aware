@@ -8,9 +8,11 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-# Astra S valid depth range in millimetres
-_DEPTH_MIN_MM: float = 400.0
-_DEPTH_MAX_MM: float = 2000.0
+# Astra S valid depth range in millimetres.
+# Keep near-field measurements for human-robot interaction instead of
+# zeroing everything below 2 m.
+_DEPTH_MIN_MM: float = 500.0
+_DEPTH_MAX_MM: float = 8000.0
 _DEPTH_MIN_VALID_PIXELS: int = 5  # minimum pixels in ROI that must be valid
 _DEPTH_ROI_HALF: int = 5  # half-size of 10×10 sampling window
 
@@ -23,7 +25,6 @@ CLASS_NAMES = [
     "dynamic_hazard",  # Động: xe đẩy hành lý, vali bị rớt, quả bóng
     "door",
     "wall",
-    "free_space",
 ]
 CLASS_IDS = {name: idx for idx, name in enumerate(CLASS_NAMES)}
 
@@ -36,12 +37,13 @@ class DetectionResult:
     confidence: float
     track_id: int = -1  # assigned by tracker
     distance: float = 0.0  # calibrated physical distance in metres
-    distance_source: str = "bbox"  # "depth" | "bbox"
+    distance_source: str = "unknown"  # "depth" | "unknown"
     intent_class: int = -1
     intent_name: str = "UNKNOWN"
     intent_confidence: float = 0.0
     dx: float = 0.0
     dy: float = 0.0
+    stale: bool = False
 
 
 @dataclass
@@ -50,6 +52,14 @@ class FrameDetections:
     obstacles: list[DetectionResult] = field(default_factory=list)
     all_detections: list[DetectionResult] = field(default_factory=list)
     free_space_ratio: float = 1.0
+    free_mask: np.ndarray | None = None
+    obstacle_mask: np.ndarray | None = None
+    unknown_mask: np.ndarray | None = None
+    free_sectors: np.ndarray | None = None
+    navigable_heading: float = 0.0
+    navigable_width: float = 0.0
+    navigable_width_m: float = 0.0
+    freespace_processing_ms: float = 0.0
     timestamp: float = 0.0
     frame_id: int = 0
     inference_ms: float = 0.0
@@ -65,6 +75,8 @@ class YOLODetector:
         model_path: str,
         use_tensorrt: bool = False,
         confidence_threshold: float = 0.5,
+        person_confidence_threshold: float | None = None,
+        person_min_height_px: int = 48,
         iou_threshold: float = 0.45,
         input_size: int | tuple[int, int] = (480, 640),  # (H, W)
         device: str = "cuda",
@@ -72,6 +84,12 @@ class YOLODetector:
         self.model_path = model_path
         self.use_tensorrt = use_tensorrt
         self.conf = confidence_threshold
+        self.person_conf = (
+            confidence_threshold
+            if person_confidence_threshold is None
+            else person_confidence_threshold
+        )
+        self.person_min_height_px = int(person_min_height_px)
         self.iou = iou_threshold
         self.input_size = input_size
         self.device = device
@@ -101,6 +119,7 @@ class YOLODetector:
             verbose=False,
             conf=self.conf,
             iou=self.iou,
+            imgsz=self.input_size,
             device=self.device,
         )
 
@@ -152,12 +171,10 @@ class YOLODetector:
             return frame_det
 
         boxes = results[0].boxes
-        free_pixels = 0
-        total_pixels = h * w
 
         for box in boxes:
             cls_id = int(box.cls[0])
-            raw_name = results[0].names[cls_id]  # Lấy tên gốc của class từ weights
+            raw_name = results[0].names[cls_id]
             class_name = self._map_to_nav_class(raw_name)
 
             if class_name == "ignore":
@@ -165,6 +182,9 @@ class YOLODetector:
 
             conf = float(box.conf[0])
             x1, y1, x2, y2 = (int(v) for v in box.xyxy[0])
+
+            if class_name == "person" and not self._passes_person_filter(conf, x1, y1, x2, y2):
+                continue
 
             det = DetectionResult(
                 bbox=(x1, y1, x2, y2),
@@ -184,32 +204,21 @@ class YOLODetector:
                 frame_det.persons.append(det)
             elif class_name in ("obstacle", "static_obstacle", "dynamic_hazard", "door", "wall"):
                 frame_det.obstacles.append(det)
-            elif class_name == "free_space":
-                free_pixels += (x2 - x1) * (y2 - y1)
-
-        frame_det.free_space_ratio = (
-            min(1.0, free_pixels / total_pixels) if total_pixels > 0 else 1.0
-        )
         return frame_det
 
     @staticmethod
     def _map_to_nav_class(raw_name: str) -> str:
         """Map raw YOLO class name (COCO or Custom) into Robot Navigation class."""
-        # 1. Nếu đang dùng Model Custom (đã có sẵn các chữ chuẩn)
         if raw_name in CLASS_NAMES:
             return raw_name
 
-        # 2. Nếu đang dùng Model COCO 80 Class (Chưa train)
         if raw_name == "person":
             return "person"
 
-        # Nhóm đồ có thể chuyển động, bị ném/trượt, hoặc kéo đi (hành lý, thùng)
-        # Balo, vali, túi xách thường là hành lý sân bay. Quả bóng đại diện cho vật thể ném.
         dynamic_keywords = {"sports ball", "frisbee", "backpack", "suitcase", "handbag", "umbrella"}
         if raw_name in dynamic_keywords:
             return "dynamic_hazard"
 
-        # Nhóm vật cản tĩnh (ghế chờ, bàn, cây cảnh)
         static_keywords = {
             "bench",
             "chair",
@@ -222,8 +231,22 @@ class YOLODetector:
         if raw_name in static_keywords:
             return "static_obstacle"
 
-        # Vụng vặt không cản đường (ly, chén, nĩa, sách) thì bỏ qua
         return "ignore"
+
+    def _passes_person_filter(
+        self,
+        confidence: float,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+    ) -> bool:
+        if confidence < self.person_conf:
+            return False
+        bbox_height = max(0, y2 - y1)
+        if bbox_height < self.person_min_height_px:
+            return False
+        return True
 
     @staticmethod
     def _estimate_distance(
@@ -236,11 +259,11 @@ class YOLODetector:
         class_name: str,
         depth_frame: np.ndarray | None,
     ) -> tuple[float, str]:
-        """Hybrid distance estimation: depth camera primary, bbox heuristic fallback.
+        """Depth-only distance estimation.
 
         Returns
         -------
-        (distance_metres, source)  where source is "depth" or "bbox".
+        (distance_metres, source) where source is "depth" or "unknown".
         """
         # Depth estimation (Astra S, uint16 mm)
         if depth_frame is not None:
@@ -255,18 +278,11 @@ class YOLODetector:
 
             roi = depth_frame[r0:r1, c0:c1].astype(np.float32)
 
-            # Keep only pixels within Astra S valid range
             valid_mask = (roi >= _DEPTH_MIN_MM) & (roi <= _DEPTH_MAX_MM)
             valid_pixels = int(np.count_nonzero(valid_mask))
 
             if valid_pixels >= _DEPTH_MIN_VALID_PIXELS:
-                # Median of valid pixels, convert mm → metres
                 depth_m = float(np.median(roi[valid_mask])) / 1000.0
                 return round(depth_m, 3), "depth"
 
-        # Bbox heuristic fallback
-        # k_factor is empirical: person ~1.7m tall, obstacle ~0.6m
-        bbox_height = max(1, y2 - y1)
-        k_factor = 1.5 if class_name == "person" else 0.5
-        dist_m = max(0.2, k_factor * frame_h / bbox_height)
-        return round(dist_m, 3), "bbox"
+        return 0.0, "unknown"

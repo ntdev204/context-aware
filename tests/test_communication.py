@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import struct
 import time
 
@@ -21,7 +22,12 @@ class TestNavCommandSerialization:
     def test_clip_velocity_negative(self):
         cmd = NavigationCommand(mode=NavigationMode.CRUISE, velocity_scale=-0.5)
         cmd.clip()
-        assert cmd.velocity_scale == 0.0
+        assert cmd.velocity_scale == -0.5
+
+    def test_clip_velocity_underflow(self):
+        cmd = NavigationCommand(mode=NavigationMode.CRUISE, velocity_scale=-2.5)
+        cmd.clip()
+        assert cmd.velocity_scale == -1.0
 
     def test_clip_heading(self):
         import math
@@ -36,8 +42,8 @@ class TestNavCommandSerialization:
         assert result is cmd
 
     def test_repr_contains_mode(self):
-        cmd = NavigationCommand(mode=NavigationMode.FOLLOW, velocity_scale=0.5)
-        assert "FOLLOW" in repr(cmd)
+        cmd = NavigationCommand(mode=NavigationMode.STOP, velocity_scale=0.0)
+        assert "STOP" in repr(cmd)
 
     def test_is_safe_to_move_stop(self):
         cmd = NavigationCommand(mode=NavigationMode.STOP, velocity_scale=0.0)
@@ -62,7 +68,6 @@ class TestZMQPublisherEncoding:
             mode=NavigationMode.AVOID,
             velocity_scale=0.4,
             heading_offset=0.15,
-            follow_target_id=-1,
             confidence=0.85,
             safety_override=False,
         )
@@ -79,7 +84,6 @@ class TestZMQPublisherEncoding:
             mode=NavigationMode.CRUISE,
             velocity_scale=0.7,
             heading_offset=-0.1,
-            follow_target_id=-1,
             timestamp=1234567.8,
             confidence=0.9,
             safety_override=False,
@@ -93,6 +97,65 @@ class TestZMQPublisherEncoding:
             assert mode == int(NavigationMode.CRUISE)
             assert abs(v - 0.7) < 1e-5
             assert abs(h - (-0.1)) < 1e-5
+
+
+class TestZMQSubscriberDecoding:
+    def test_struct_robot_state_decodes_lidar_sectors(self):
+        pytest.importorskip("zmq")
+        from src.communication.zmq_subscriber import ZMQSubscriber
+
+        raw = struct.pack(
+            "!11fd",
+            0.1,
+            0.2,
+            0.3,
+            1.0,
+            2.0,
+            0.4,
+            88.0,
+            0.55,
+            1.2,
+            1.8,
+            0.7,
+            123.0,
+        )
+
+        state = ZMQSubscriber._decode(raw)
+
+        assert abs(state.pos_theta - 0.4) < 1e-6
+        assert state.lidar_sectors == pytest.approx((0.55, 1.2, 1.8, 0.7))
+
+    def test_json_robot_state_decodes_full_lidar_scan(self):
+        pytest.importorskip("zmq")
+        from src.communication.zmq_subscriber import ZMQSubscriber
+
+        scan = [9.9] * 360
+        scan[0] = 0.42
+        scan[90] = 1.7
+        raw = json.dumps(
+            {
+                "odom": {
+                    "vx": 0.1,
+                    "vy": 0.2,
+                    "vtheta": 0.3,
+                    "pos_x": 1.0,
+                    "pos_y": 2.0,
+                    "pos_theta": 0.4,
+                },
+                "battery_percent": 87.0,
+                "lidar": {
+                    "sectors": {"front": 0.42, "rear": 1.2, "left": 1.7, "right": 0.8},
+                    "scan360": scan,
+                },
+                "timestamp": 123.0,
+            }
+        ).encode("utf-8")
+
+        state = ZMQSubscriber._decode(raw)
+
+        assert state.lidar_front == 0.42
+        assert len(state.lidar_scan) == 360
+        assert state.lidar_scan[90] == 1.7
 
 
 # ── ZMQ Loopback (integration, requires ZMQ) ─────────────────────────────────

@@ -204,8 +204,8 @@ training/reward_shaping.py    (NEW)
   | APPROACHING | -0.3    | Moderate — robot should slow       |
   | DEPARTING   | +0.2    | Positive — person moving away      |
   | CROSSING    | -0.6    | High risk — robot should stop/wait |
-  | FOLLOWING   | 0.0     | Neutral                            |
   | ERRATIC     | -0.8    | Highest risk — unpredictable       |
+  | UNCERTAIN   | -0.2    | Abstain / needs review             |
 
   #### 3.3 Implementation
 
@@ -390,8 +390,8 @@ training/configs/rl_config.yaml    (NEW/MODIFY)
   else:
       nav_cmd = heuristic_policy.decide(observation)
 
-  # Safety monitor ALWAYS runs regardless of policy
-  nav_cmd = safety_monitor.check(nav_cmd, detections, observation)
+  # Heuristic policy owns rule-based safety decisions before command publishing
+  nav_cmd = heuristic_policy.decide(observation, detections, intent_preds)
   ```
 
 **Files**:

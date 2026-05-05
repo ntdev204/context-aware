@@ -18,6 +18,8 @@ MIN_TOTAL_IMAGES = 500
 MIN_CLASS_IMAGES = 50
 MAX_IMBALANCE_RATIO = 10.0
 MAX_DUPLICATE_PCT = 5.0
+TRAINABLE_CLASSES = {"STATIONARY", "APPROACHING", "DEPARTING", "CROSSING", "ERRATIC"}
+IGNORED_CLASSES = {"UNCERTAIN", "uncertain", "FOLLOW", "FOLLOWING"}
 
 
 def _remove_bad_files(files_meta: list[dict]):
@@ -52,21 +54,47 @@ def validate(report_path: Path) -> int:
         # (We don't know exactly which class they belonged to without parsing,
         # but total_images adjustment is enough for the block threshold)
 
-    # 2. Block checks
-    total = report.get("total_images", 0)
+    # 2. Block checks. Training ignores UNCERTAIN samples, so quality gates
+    # must use trainable images only.
+    raw_classes = report.get("classes", {})
+    classes = {
+        str(name).upper(): count
+        for name, count in raw_classes.items()
+        if str(name).upper() in TRAINABLE_CLASSES
+    }
+    total = sum(classes.values())
+    ignored_total = sum(
+        count for name, count in raw_classes.items() if str(name).upper() in IGNORED_CLASSES
+    )
+
+    if ignored_total:
+        print(f"[*] Ignoring {ignored_total} UNCERTAIN/legacy FOLLOW images for training gates.")
+
+    if "review_pending_by_class" not in report:
+        print("[!] WARNING: Report predates review-gate fields. Re-run explore_roi.py first.")
+
+    pending_review = report.get("review_pending_by_class", {})
+    erratic_pending = int(pending_review.get("ERRATIC", 0))
+    if erratic_pending:
+        print(f"[❌] BLOCKED: {erratic_pending} ERRATIC samples still need human review.")
+        status = 1
+
+    uncertain_pending = int(pending_review.get("UNCERTAIN", 0))
+    if uncertain_pending:
+        print(f"[*] Review queue: {uncertain_pending} UNCERTAIN samples pending; excluded from training.")
+
     if total < MIN_TOTAL_IMAGES:
-        print(f"[❌] BLOCKED: Total images ({total}) < required ({MIN_TOTAL_IMAGES})")
+        print(f"[❌] BLOCKED: Trainable images ({total}) < required ({MIN_TOTAL_IMAGES})")
         status = 1
     else:
-        print(f"[✅] Total images: {total}")
+        print(f"[✅] Trainable images: {total}")
 
     if status == 1:
         return status  # Fatal, no need to check warnings
 
     # 3. Warning checks
-    classes = report.get("classes", {})
     if not classes:
-        print("[❌] BLOCKED: No classes found.")
+        print("[❌] BLOCKED: No trainable classes found.")
         return 1
 
     counts = list(classes.values())

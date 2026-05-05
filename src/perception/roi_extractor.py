@@ -1,5 +1,3 @@
-"""Crops person ROIs from frames for CNN intent prediction input."""
-
 from __future__ import annotations
 
 import logging
@@ -18,16 +16,17 @@ CNN_INPUT_H = 256
 
 @dataclass
 class PersonROI:
-    image: np.ndarray  # shape (CNN_INPUT_H, CNN_INPUT_W, 3), BGR
-    bbox: tuple[int, int, int, int]  # original bbox in full frame
+    image: np.ndarray
+    bbox: tuple[int, int, int, int]
     track_id: int
-    relative_position: tuple[float, float]  # (cx_norm, cy_norm) in [0-1]
-    distance_estimate: float = 0.0  # deprecated: use DetectionResult.distance
+    relative_position: tuple[float, float]
+    distance_estimate: float = 0.0  # normalised [0, 1]
+    dist_mm: float = 0.0  # raw depth in mm from sensor (0 = unknown)
+    frame_w: int = 0
+    frame_h: int = 0
 
 
 class ROIExtractor:
-    """Extracts and normalises person ROIs for batch CNN inference."""
-
     def __init__(
         self,
         output_width: int = CNN_INPUT_W,
@@ -39,11 +38,12 @@ class ROIExtractor:
         self.padding_ratio = padding_ratio
 
     def extract(self, frame: np.ndarray, frame_det: FrameDetections) -> list[PersonROI]:
-        """Return a PersonROI for every tracked person in *frame_det*."""
         h, w = frame.shape[:2]
         rois: list[PersonROI] = []
 
         for person in frame_det.persons:
+            if getattr(person, "stale", False):
+                continue
             roi = self._crop_person(frame, person, h, w)
             if roi is not None:
                 rois.append(roi)
@@ -79,11 +79,12 @@ class ROIExtractor:
             crop, (self.output_width, self.output_height), interpolation=cv2.INTER_LINEAR
         )
 
-        # Normalised centre position relative to frame
         cx_norm = ((x1 + x2) / 2.0) / frame_w
         cy_norm = ((y1 + y2) / 2.0) / frame_h
 
         dist_estimate = max(0.0, 1.0 - (bh / frame_h))
+        # Convert metres → mm; 0 when source is "unknown"
+        dist_mm = round(person.distance * 1000.0) if person.distance_source == "depth" else 0.0
 
         return PersonROI(
             image=resized,
@@ -91,4 +92,7 @@ class ROIExtractor:
             track_id=person.track_id,
             relative_position=(cx_norm, cy_norm),
             distance_estimate=dist_estimate,
+            dist_mm=dist_mm,
+            frame_w=frame_w,
+            frame_h=frame_h,
         )

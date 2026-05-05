@@ -29,7 +29,7 @@ def main() -> None:
         type=int,
         nargs="+",
         default=[480, 640],
-        help="Input size as H W (default: 480 640 for 640x480 camera)",
+        help="Input size as H W (default: 480 640 for landscape camera)",
     )
     parser.add_argument(
         "--workspace", type=int, default=2, help="TensorRT workspace in GB (default: 2)"

@@ -16,12 +16,21 @@ class InferenceMetrics:
     obstacles: int = 0
     buffer_size: int = 0
     depth_coverage_pct: float = 0.0
+    battery_percent: float = 0.0
+    vx: float = 0.0
+    vy: float = 0.0
+    vtheta: float = 0.0
+    lidar_front: float = 9.9
+    lidar_rear: float = 9.9
+    lidar_left: float = 9.9
+    lidar_right: float = 9.9
+    lidar_scan_count: int = 0
     mode: str = "IDLE"
     frame_id: int = 0
     updated_at: float = field(default_factory=time.monotonic)
 
 
-VALID_MODE_OVERRIDES = frozenset({"STOP", "CRUISE", "CAUTIOUS", "AVOID", "FOLLOW"})
+VALID_MODE_OVERRIDES = frozenset({"STOP", "YIELD"})
 
 
 class ServerState:
@@ -40,6 +49,7 @@ class ServerState:
         self._running = True
         self._start_time = time.monotonic()
         self._latest_detections: dict[str, Any] = {}
+        self._dataset_manager: Any | None = None
 
     @property
     def uptime_seconds(self) -> float:
@@ -62,6 +72,15 @@ class ServerState:
                 obstacles=m.obstacles,
                 buffer_size=m.buffer_size,
                 depth_coverage_pct=m.depth_coverage_pct,
+                battery_percent=m.battery_percent,
+                vx=m.vx,
+                vy=m.vy,
+                vtheta=m.vtheta,
+                lidar_front=m.lidar_front,
+                lidar_rear=m.lidar_rear,
+                lidar_left=m.lidar_left,
+                lidar_right=m.lidar_right,
+                lidar_scan_count=m.lidar_scan_count,
                 mode=m.mode,
                 frame_id=m.frame_id,
                 updated_at=m.updated_at,
@@ -100,6 +119,14 @@ class ServerState:
     def get_runtime_config(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._runtime_config)
+
+    def set_dataset_manager(self, manager: Any) -> None:
+        with self._lock:
+            self._dataset_manager = manager
+
+    def get_dataset_manager(self) -> Any | None:
+        with self._lock:
+            return self._dataset_manager
 
     def set_running(self, running: bool) -> None:
         with self._lock:

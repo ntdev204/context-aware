@@ -11,7 +11,7 @@
 
 ## Mục tiêu
 
-Xây dựng hệ thống nền tảng hoàn chỉnh trên Jetson: detection + tracking + CNN intent (snapshot) + heuristic navigation + data logging + safety layer + ZMQ communication tới RasPi.
+Xây dựng hệ thống nền tảng hoàn chỉnh trên Jetson: detection + tracking + Temporal Intent CNN, data logging, safety layer và ZMQ communication tới RasPi. Chính sách runtime hiện tại giữ ở STOP-only để ưu tiên perception và dataset trước camera-driven motion.
 
 > ⚠️ **WARNING**
 > Phase này KHÔNG có RL. Robot điều hướng bằng **rule-based heuristic**. Mục đích chính: thu data đúng + an toàn + modular.
@@ -23,8 +23,8 @@ Xây dựng hệ thống nền tảng hoàn chỉnh trên Jetson: detection + tr
 | #   | Deliverable           | Mô tả                                    | Bottleneck |
 | --- | --------------------- | ---------------------------------------- | ---------- |
 | D1  | Perception Pipeline   | YOLO + ByteTrack + ROI Extraction        | —          |
-| D2  | CNN Intent Prediction | MobileNetV3-Small, snapshot mode (k=1)   | —          |
-| D3  | Context State Builder | Temporal-ready observation (k=1 ban đầu) | B1         |
+| D2  | CNN Intent Prediction | Temporal Intent CNN, sequence-first API  | —          |
+| D3  | Context State Builder | Temporal-ready observation stack          | B1         |
 | D4  | Heuristic Navigation  | Rule-based policy thay cho RL            | —          |
 | D5  | Data Logging Pipeline | Full-frame logging, lossless, aligned    | C1 🔴      |
 | D6  | Safety Layer          | 3-layer safety monitor                   | C3 🔴      |
@@ -127,25 +127,25 @@ src/perception/roi_extractor.py
 
 ---
 
-### 4. CNN Intent Prediction — Snapshot Mode (D2)
+### 4. CNN Intent Prediction — Temporal API Baseline (D2)
 
 - [ ] `src/perception/intent_cnn.py`
   - Load MobileNetV3-Small + Intent Head + Direction Head
-  - Phase 1: snapshot mode (1 frame per person, no temporal)
+  - Phase hiện tại: temporal contract giữ ngay từ đầu; model runtime hiện dùng sequence ROI dài 15 frame
   - Input: 128×256×3 (single cropped ROI)
   - Output: `IntentPrediction` (6 intent probs + dx, dy direction vector)
   - Batch inference: tối đa 5 persons cùng lúc
   - TensorRT `.engine` (FP16) hoặc PyTorch fallback
 
-**Intent Classes** (6):
+**Intent Classes** (runtime 6 slots; 5 trainable + abstain):
 | ID | Intent | Description |
 |----|--------|-------------|
 | 0 | STATIONARY | Người đứng yên |
 | 1 | APPROACHING | Người đi tới robot |
 | 2 | DEPARTING | Người đi xa robot |
 | 3 | CROSSING | Người cắt ngang |
-| 4 | FOLLOWING | Người đi theo robot |
-| 5 | ERRATIC | Chuyển động bất thường |
+| 4 | ERRATIC | Chuyển động bất thường |
+| 5 | UNCERTAIN | Abstain / cần review |
 
 > **NOTE**: Phase 1 chưa có trained CNN weights → dùng pretrained MobileNetV3 + random heads (for pipeline testing). Training CNN thực sự ở Phase 2 sau khi có data.
 
@@ -164,7 +164,7 @@ src/perception/intent_cnn.py
 - [ ] `src/navigation/context_builder.py`
   - Build `ObservationSpace` từ detections + intents + robot state
   - **CRITICAL**: Thiết kế temporal-ready từ đầu (Bottleneck B1)
-    - `temporal_stack_size = 1` (Phase 1, snapshot)
+    - `temporal_stack_size = 1` ở foundation chỉ là context-state cold baseline, không phải snapshot API cho intent model
     - Nhưng kiến trúc hỗ trợ `k = 3-5` (Phase 2)
     - `observation_history: deque(maxlen=k)` — ring buffer
     - Versioned: `state_version: str` trong observation
@@ -204,8 +204,6 @@ src/navigation/context_builder.py
       mode = STOP, velocity = 0.0
   elif person crossing path:
       mode = AVOID, velocity = 0.3, heading_offset = avoid_direction
-  elif follow command active:
-      mode = FOLLOW, velocity = 0.5, heading = toward_target
   ```
 
 - [ ] `src/navigation/nav_command.py`
@@ -273,7 +271,7 @@ src/experience/buffer.py
 > 🔴 **CAUTION**
 > Safety CANNOT be learned — must be engineered. Bottleneck C3.
 
-- [ ] `src/navigation/safety_monitor.py`
+- [ ] `src/navigation/heuristic_policy.py`
   - **Layer 1: Output Clipping** (trong navigation policy)
     - `velocity_scale` clamp [0.0, 1.0]
     - `heading_offset` clamp [-π/4, π/4]
@@ -295,7 +293,7 @@ src/experience/buffer.py
 **Files**:
 
 ```
-src/navigation/safety_monitor.py
+src/navigation/heuristic_policy.py
 ```
 
 ---

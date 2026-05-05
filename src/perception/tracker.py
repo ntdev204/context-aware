@@ -1,12 +1,7 @@
-"""ByteTrack-based multi-object tracker for stable track_id assignment.
-
-Primary backend: supervision.ByteTrack (pip install supervision).
-Fallback: minimal IoU tracker with min_hits warm-up to suppress ghost tracks.
-"""
-
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 import numpy as np
 
@@ -14,13 +9,12 @@ from .yolo_detector import DetectionResult, FrameDetections
 
 logger = logging.getLogger(__name__)
 
-# Prefer supervision.ByteTrack — works with any ultralytics version.
 try:
     import supervision as sv
 
     _HAS_SUPERVISION = True
     logger.info("ByteTrack backend: supervision.ByteTrack")
-except ImportError:  # pragma: no cover
+except ImportError:
     _HAS_SUPERVISION = False
     logger.warning(
         "supervision not installed — using fallback IoU tracker. Run: pip install supervision"
@@ -28,13 +22,6 @@ except ImportError:  # pragma: no cover
 
 
 class _FallbackTracker:
-    """Minimal IoU tracker with min_hits warm-up (used when supervision is unavailable).
-
-    A detection must be matched at least *min_hits* consecutive frames before
-    its track_id is exposed — this suppresses ghost tracks from single-frame
-    noise, matching ByteTrack's behaviour.
-    """
-
     def __init__(
         self,
         max_age: int = 30,
@@ -44,7 +31,6 @@ class _FallbackTracker:
         self.max_age = max_age
         self.min_hits = min_hits
         self.iou_threshold = iou_threshold
-        # track entry: {"bbox", "age", "hits"}
         self._tracks: dict[int, dict] = {}
         self._next_id = 1
 
@@ -74,7 +60,6 @@ class _FallbackTracker:
                 self._tracks[best_id]["age"] = 0
                 self._tracks[best_id]["hits"] += 1
                 matched_ids.add(best_id)
-                # Only expose track_id once the track is confirmed
                 if self._tracks[best_id]["hits"] >= self.min_hits:
                     det.track_id = best_id
             else:
@@ -108,17 +93,20 @@ class _FallbackTracker:
 
 
 class Tracker:
-    """Wraps supervision.ByteTrack (preferred) or IoU fallback to assign stable track_ids."""
-
     def __init__(
         self,
         max_age: int = 30,
         min_hits: int = 3,
         iou_threshold: float = 0.3,
+        hold_missing: int = 10,
+        bbox_smoothing_alpha: float = 0.65,
     ) -> None:
         self.max_age = max_age
         self.min_hits = min_hits
         self.iou_threshold = iou_threshold
+        self.hold_missing = max(0, int(hold_missing))
+        self.bbox_smoothing_alpha = float(np.clip(bbox_smoothing_alpha, 0.0, 1.0))
+        self._track_memory: dict[int, dict] = {}
         self._impl = self._build_tracker()
 
     def _build_tracker(self):
@@ -137,25 +125,23 @@ class Tracker:
         )
 
     def update(self, frame_det: FrameDetections, frame_shape: tuple) -> FrameDetections:
-        """Assign track_ids to all person detections in *frame_det*."""
+        non_person_detections = [d for d in frame_det.all_detections if d.class_name != "person"]
+
         if not frame_det.persons:
-            return frame_det
-
-        if _HAS_SUPERVISION:
-            frame_det.persons = self._update_supervision(frame_det.persons)
+            if not _HAS_SUPERVISION:
+                self._impl.update([])
+            tracked_persons = []
+        elif _HAS_SUPERVISION:
+            tracked_persons = self._update_supervision(frame_det.persons)
         else:
-            frame_det.persons = self._impl.update(frame_det.persons)
+            tracked_persons = self._impl.update(frame_det.persons)
 
-        # Mirror confirmed track_ids into all_detections list
-        person_tracks = {d.bbox: d.track_id for d in frame_det.persons}
-        for det in frame_det.all_detections:
-            if det.class_name == "person":
-                det.track_id = person_tracks.get(det.bbox, -1)
+        frame_det.persons = self._stabilize_persons(tracked_persons)
+        frame_det.all_detections = frame_det.persons + non_person_detections
 
         return frame_det
 
     def _update_supervision(self, persons: list[DetectionResult]) -> list[DetectionResult]:
-        """Use supervision.ByteTrack — accepts sv.Detections natively."""
         xyxy = np.array([list(d.bbox) for d in persons], dtype=np.float32)
         confs = np.array([d.confidence for d in persons], dtype=np.float32)
         class_ids = np.array([d.class_id for d in persons], dtype=int)
@@ -166,15 +152,74 @@ class Tracker:
             class_id=class_ids,
         )
         tracked = self._impl.update_with_detections(sv_dets)
+        if tracked.tracker_id is None:
+            return []
 
         confirmed: list[DetectionResult] = []
+        used_indices: set[int] = set()
         for i in range(len(tracked)):
             tx1, ty1, tx2, ty2 = (int(v) for v in tracked.xyxy[i])
             tid = int(tracked.tracker_id[i])
-            for det in persons:
-                dx1, dy1, dx2, dy2 = det.bbox
-                if abs(dx1 - tx1) < 10 and abs(dy1 - ty1) < 10:
-                    det.track_id = tid
-                    confirmed.append(det)
-                    break
+            tracked_bbox = (tx1, ty1, tx2, ty2)
+            best_idx = -1
+            best_iou = 0.05
+            for idx, det in enumerate(persons):
+                if idx in used_indices:
+                    continue
+                iou = _FallbackTracker._iou(det.bbox, tracked_bbox)
+                if iou > best_iou:
+                    best_iou = iou
+                    best_idx = idx
+            if best_idx >= 0:
+                det = persons[best_idx]
+                det.track_id = tid
+                confirmed.append(det)
+                used_indices.add(best_idx)
         return confirmed
+
+    def _stabilize_persons(self, persons: list[DetectionResult]) -> list[DetectionResult]:
+        stable_persons: list[DetectionResult] = []
+        seen_ids: set[int] = set()
+
+        for person in persons:
+            if person.track_id < 0:
+                continue
+            seen_ids.add(person.track_id)
+            previous = self._track_memory.get(person.track_id)
+            stable = replace(person, stale=False)
+            if previous is not None:
+                stable.bbox = self._smooth_bbox(previous["det"].bbox, person.bbox)
+            self._track_memory[person.track_id] = {"det": replace(stable), "missed": 0}
+            stable_persons.append(stable)
+
+        for track_id in list(self._track_memory):
+            if track_id in seen_ids:
+                continue
+            memory = self._track_memory[track_id]
+            memory["missed"] += 1
+            if memory["missed"] > self.hold_missing:
+                del self._track_memory[track_id]
+                continue
+
+            last_det = memory["det"]
+            decay = max(0.2, 1.0 - memory["missed"] / max(self.hold_missing + 1, 1))
+            stale_det = replace(
+                last_det,
+                confidence=float(last_det.confidence * decay),
+                distance=0.0,
+                distance_source="unknown",
+                stale=True,
+            )
+            stable_persons.append(stale_det)
+
+        return stable_persons
+
+    def _smooth_bbox(
+        self,
+        previous: tuple[int, int, int, int],
+        current: tuple[int, int, int, int],
+    ) -> tuple[int, int, int, int]:
+        alpha = self.bbox_smoothing_alpha
+        return tuple(
+            int(round(prev * (1.0 - alpha) + cur * alpha)) for prev, cur in zip(previous, current)
+        )

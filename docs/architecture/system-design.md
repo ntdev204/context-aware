@@ -220,7 +220,7 @@ class FrameDetections:
     timestamp: float
 ```
 
-**Tracker**: Tích hợp **ByteTrack** để gán `track_id` ổn định cho mỗi person qua frames → cần thiết cho follow mode và intent prediction liên tục.
+**Tracker**: Tích hợp **ByteTrack** để gán `track_id` ổn định cho mỗi person qua frames, cần thiết cho temporal intent prediction liên tục.
 
 ### 4.2 ROI Extraction
 
@@ -307,8 +307,8 @@ class ROIExtractor:
 | 1        | `APPROACHING` | Người đi tới robot          | Giảm tốc + chuẩn bị tránh |
 | 2        | `DEPARTING`   | Người đi xa khỏi robot      | Duy trì / tăng tốc        |
 | 3        | `CROSSING`    | Người cắt ngang đường robot | Dừng / chờ                |
-| 4        | `FOLLOWING`   | Người đi theo robot         | Giữ tốc ổn định           |
-| 5        | `ERRATIC`     | Chuyển động bất thường      | Dừng + cảnh báo           |
+| 4        | `ERRATIC`     | Chuyển động bất thường      | Dừng + cảnh báo           |
+| 5        | `UNCERTAIN`   | Thiếu chắc chắn/abstain     | Human review, không train |
 
 ### 5.3 CNN Specifications
 
@@ -452,14 +452,13 @@ class VLMStateAligner:
 @dataclass
 class ActionSpace:
     # Navigation Mode (discrete, embedded as logits → argmax)
-    mode_logits: np.ndarray     # (5,) → [CRUISE, CAUTIOUS, AVOID, FOLLOW, STOP]
+    mode_logits: np.ndarray     # (5,) -> [CRUISE, CAUTIOUS, AVOID, RESERVED, STOP]
 
     # Velocity Control (continuous)
     velocity_scale: float       # [0.0, 1.0] — Tỷ lệ tốc độ tối đa
     heading_offset: float       # [-π/4, π/4] — Điều chỉnh hướng (rad)
 
-    # Follow Target (only active in FOLLOW mode)
-    follow_target_idx: int      # Index of target person (0-2)
+    reserved_target_idx: int    # Reserved for wire compatibility, not used
 ```
 
 #### Navigation Modes
@@ -469,7 +468,7 @@ class ActionSpace:
 | `CRUISE`   | `free_space_ratio > 0.8`, no persons nearby | Tốc độ tối đa, đi thẳng        |
 | `CAUTIOUS` | Persons detected nhưng không blocking       | Giảm 40% tốc, quan sát         |
 | `AVOID`    | Person/obstacle trên đường đi               | Giảm 70% tốc, điều hướng tránh |
-| `FOLLOW`   | Nhận lệnh follow hoặc detect gesture        | Bám theo target person         |
+| `RESERVED` | Slot tương thích giao thức, không dùng       | Không phát hành vi bám người   |
 | `STOP`     | Nguy hiểm / người quá gần / erratic         | Dừng hoàn toàn                 |
 
 #### Reward Function — Structured VLM-Guided with Temporal Intent (GAP #1 + #2)
@@ -547,11 +546,11 @@ where:
 | APPROACHING | -0.3 | Moderate risk — robot should slow |
 | DEPARTING | +0.2 | Positive — person moving away |
 | CROSSING | -0.6 | High risk — robot should stop/wait |
-| FOLLOWING | 0.0 | Neutral |
 | ERRATIC | -0.8 | Highest risk — unpredictable |
+| UNCERTAIN | -0.2 | Abstain / needs review |
 
 ```python
-INTENT_RISK = {0: 0.0, 1: -0.3, 2: 0.2, 3: -0.6, 4: 0.0, 5: -0.8}
+INTENT_RISK = {0: 0.0, 1: -0.3, 2: 0.2, 3: -0.6, 4: -0.8, 5: -0.2}
 TEMPORAL_GAMMA = 0.9
 LOOKAHEAD_K = 5  # frames (~167ms at 30 FPS)
 
@@ -816,7 +815,7 @@ enum NavigationMode {
   CRUISE = 0;
   CAUTIOUS = 1;
   AVOID = 2;
-  FOLLOW = 3;
+  RESERVED = 3;
   STOP = 4;
 }
 
@@ -824,7 +823,7 @@ message NavigationCommand {
   NavigationMode mode = 1;
   float velocity_scale = 2;      // 0.0 - 1.0
   float heading_offset = 3;      // radians
-  int32 follow_target_id = 4;    // -1 if not following
+  int32 reserved_target_id = 4;  // kept as -1 for wire compatibility
   double timestamp = 5;
   float confidence = 6;          // RL policy confidence
 }
@@ -1048,8 +1047,6 @@ RasPi cần một **bridge node** để chuyển đổi giữa ZMQ messages và 
 │  ┌─────────────────────────────────────────┐          │
 │  │  if nav_cmd.mode == CRUISE:             │          │
 │  │    apply cmd_vel at full scale          │          │
-│  │  elif nav_cmd.mode == FOLLOW:           │          │
-│  │    override local planner with AI cmd   │          │
 │  │  elif nav_cmd.mode == STOP:             │          │
 │  │    publish zero velocity immediately    │          │
 │  │  else:                                  │          │
@@ -1062,10 +1059,10 @@ RasPi cần một **bridge node** để chuyển đổi giữa ZMQ messages và 
 
 | AI Mode    | RasPi Behavior                              | Nav2 Integration                                |
 | ---------- | ------------------------------------------- | ----------------------------------------------- |
-| `CRUISE`   | cmd_vel.linear = max × velocity_scale       | Global planner active, local planner follows AI |
+| `CRUISE`   | cmd_vel.linear = max × velocity_scale       | Global planner active, AI chỉ đóng vai trò perception/context |
 | `CAUTIOUS` | cmd_vel.linear = max × velocity_scale × 0.6 | Local planner active with conservative params   |
 | `AVOID`    | Heading offset applied to cmd_vel           | Local planner DWB with AI-suggested direction   |
-| `FOLLOW`   | Track target, ignore global goal            | Local planner disabled, direct velocity control |
+| `RESERVED` | Reserved slot, no active behavior           | Ignored by controller                           |
 | `STOP`     | Zero velocity, emergency                    | All planners paused                             |
 
 ---
@@ -1237,7 +1234,7 @@ context-aware/                    # Jetson AI Server repo
 │   │   ├── context_builder.py    # Build observation from detections
 │   │   ├── rl_policy.py          # RL policy TensorRT inference
 │   │   ├── nav_command.py        # NavigationCommand generation
-│   │   └── safety_monitor.py     # Hard safety constraints
+│   │   └── heuristic_policy.py   # Rule-based policy and safety decisions
 │   │
 │   ├── communication/            # ZMQ + gRPC
 │   │   ├── __init__.py
@@ -1421,7 +1418,7 @@ context-aware/                    # Jetson AI Server repo
 ```yaml
 # Default network config
 jetson:
-  ip: 192.168.1.10
+  ip: 25.12.4.100
   zmq_pub_nav: 5555
   zmq_pub_det: 5556
   zmq_sub_state: 5560
@@ -1429,14 +1426,14 @@ jetson:
   grpc_port: 50051
 
 raspi:
-  ip: 192.168.1.20
+  ip: 25.12.4.101
   zmq_pub_state: 5560
   zmq_sub_nav: 5555
   zmq_sub_det: 5556
   zmq_req_config: 5570
 
 laptop:
-  ip: 192.168.1.100
+  ip: localhost
   grpc_port: 50052 # VLM + Training services
   ollama_port: 11434 # Ollama API
 ```
@@ -1487,7 +1484,7 @@ laptop:
 
 #### B1. State Representation (⚠️ CRITICAL — Design Early)
 
-**Current limitation**: Only snapshot-based observation, no temporal encoding.
+**Current implementation note**: Context builder đã temporal-ready; Temporal Intent CNN runtime hiện dùng temporal ROI sequence dài 15 frame.
 
 | Aspect          | Detail                                                            |
 | --------------- | ----------------------------------------------------------------- |
@@ -1497,7 +1494,7 @@ laptop:
 | **Requirement** | State must be: extensible, versioned, backward-compatible         |
 
 > ⚠️ **WARNING**
-> State representation phải được thiết kế **temporal-ready từ ngày đầu**, dù Phase 1 chỉ dùng snapshot. Thay đổi state space sau = retrain toàn bộ RL.
+> State representation phải được thiết kế **temporal-ready từ đầu**. Runtime hiện tại vẫn giữ STOP-only policy, nhưng perception và intent stack đã chuyển sang temporal API.
 
 **Implementation — Temporal-Ready State**:
 
@@ -1511,7 +1508,7 @@ class ObservationSpace:
     observation_history: deque    # Ring buffer of past observations
 
     def get_stacked_observation(self) -> np.ndarray:
-        """Returns stacked observations. k=1 = snapshot (backward-compatible)."""
+        """Returns stacked observations. k=1 chỉ là context-state tối thiểu, không phải snapshot API cho intent model."""
         if self.temporal_stack_size == 1:
             return self.current_observation
         return np.concatenate(list(self.observation_history))
@@ -1911,7 +1908,7 @@ Most research papers:
 │  GAP addressed: #5 (System-level deployment pipeline)    │
 │                                                          │
 │  ✅ YOLO + ByteTrack (detection + tracking)              │
-│  ✅ Simple CNN (no temporal, snapshot only)               │
+│  ✅ Temporal Intent CNN baseline (MobileNetV3 + Conv1D)   │
 │  ✅ Heuristic navigation policy (rule-based, no RL)      │
 │  ✅ Full data logging pipeline (C1 — CRITICAL)           │
 │  ✅ ZMQ communication to RasPi                           │
