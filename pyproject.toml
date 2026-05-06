@@ -39,7 +39,7 @@ cpu = [
     "torchvision==0.18.1+cpu",
     "numpy==1.26.0",
     "opencv-contrib-python>=4.8.0,<5.0.0",
-    "ultralytics==8.3.0",
+    "ultralytics>=8.3.0",
     "supervision>=0.22.0",
 ]
 
