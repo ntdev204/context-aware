@@ -154,7 +154,7 @@ def _build_pipeline(cfg) -> dict:
     )
 
     yolo = YOLODetector(
-        model_path=per_cfg.get("yolo.model_path", "models/yolo/yolo26s.pt"),
+        model_path=per_cfg.get("yolo.model_path", "models/yolo/yolo11s.pt"),
         use_tensorrt=per_cfg.get("yolo.use_tensorrt", False),
         confidence_threshold=per_cfg.get("yolo.confidence_threshold", 0.5),
         person_confidence_threshold=per_cfg.get("yolo.person_confidence_threshold", None),
