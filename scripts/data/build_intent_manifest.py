@@ -51,7 +51,7 @@ def build_manifest(dataset: Path, temporal_window: int = 15) -> dict:
     images = [
         p
         for p in list(dataset.rglob("*.jpg")) + list(dataset.rglob("*.png"))
-        if "reports" not in p.parts and "review_queue" not in p.parts
+        if "reports" not in p.parts and "review_queue" not in p.parts and "_tracks" not in p.parts
     ]
 
     class_counts: Counter[str] = Counter()
@@ -82,7 +82,9 @@ def build_manifest(dataset: Path, temporal_window: int = 15) -> dict:
             )
             tracks[track_uid].append(int(sidecar.get("frame_id", 0)))
 
-    short_tracks = {tid: len(frames) for tid, frames in tracks.items() if len(frames) < temporal_window}
+    short_tracks = {
+        tid: len(frames) for tid, frames in tracks.items() if len(frames) < temporal_window
+    }
     ready = (
         legacy_follow_count == 0
         and review_pending.get("ERRATIC", 0) == 0

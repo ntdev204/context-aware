@@ -371,6 +371,7 @@ def _calibrate_or_abstain(
     final[:NUM_TRAINABLE_INTENT_CLASSES] = trainable
     return final, cls, confidence, review_required
 
+
 try:
     import torch.nn as nn
 

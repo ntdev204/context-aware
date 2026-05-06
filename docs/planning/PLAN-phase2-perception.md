@@ -16,10 +16,10 @@ The phase must be treated as unfinished until the dataset manifest, validation r
 
 1. Build a standard ROI sequence dataset for human movement intent.
 2. Remove person-following behavior from the ontology and from all training assumptions.
-3. Use 15-frame temporal samples instead of single-frame snapshot samples.
+3. Use whole-track K-frame temporal samples instead of single-frame snapshot samples.
 4. Train a lightweight Temporal Intent CNN that can run on the Jetson perception path.
 5. Add confidence calibration and abstention so low-quality predictions become `UNCERTAIN` instead of unsafe high-confidence labels.
-6. Keep `ERRATIC` under human review before it is allowed to influence training.
+6. Use heuristic, VLM, and LLM labeling as web-visible proposals, with human approval required before any sequence is allowed to influence training.
 7. Export a versioned model artifact with metadata that exactly matches runtime class mapping.
 
 ### 1.2 Secondary objectives
@@ -208,7 +208,7 @@ Run the robot in a controlled environment with realistic pedestrian movement:
 5. Person moving irregularly, stopping suddenly, or changing direction.
 6. Background scenes without relevant movement, to test false positives and low-confidence outputs.
 
-The collection must keep `track_id`, `frame_id`, timestamp, bounding box, and depth information. Short clips are allowed, but phase-2 quality gates should favor tracks long enough to create several 15-frame temporal samples.
+The collection must keep `track_id`, `frame_id`, timestamp, bounding box, and depth information. Each dataset sample is the full track from first appearance until disappearance; training may pad or sample that K-frame track into the model input length.
 
 ### 5.2 Step B - Auto-label raw ROI data
 

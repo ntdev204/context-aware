@@ -48,7 +48,9 @@ def _load_checkpoint(path: Path, device: torch.device) -> dict:
 
 def main() -> None:
     args = parse_args()
-    device = torch.device(args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu")
+    device = torch.device(
+        args.device if args.device == "cuda" and torch.cuda.is_available() else "cpu"
+    )
 
     ckpt = _load_checkpoint(args.checkpoint, device)
     model = build_model(freeze_backbone_blocks=0).to(device)

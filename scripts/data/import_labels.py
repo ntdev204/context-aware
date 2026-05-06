@@ -12,6 +12,7 @@ try:
         sys.path.insert(0, str(ROOT))
     from src.perception.intent_labels import canonical_label, is_trainable_label
 except Exception:  # pragma: no cover
+
     def canonical_label(label: str | None) -> str:
         label_up = str(label or "UNCERTAIN").strip().upper()
         return "UNCERTAIN" if label_up in {"FOLLOW", "FOLLOWING"} else label_up

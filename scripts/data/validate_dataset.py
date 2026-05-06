@@ -81,7 +81,9 @@ def validate(report_path: Path) -> int:
 
     uncertain_pending = int(pending_review.get("UNCERTAIN", 0))
     if uncertain_pending:
-        print(f"[*] Review queue: {uncertain_pending} UNCERTAIN samples pending; excluded from training.")
+        print(
+            f"[*] Review queue: {uncertain_pending} UNCERTAIN samples pending; excluded from training."
+        )
 
     if total < MIN_TOTAL_IMAGES:
         print(f"[❌] BLOCKED: Trainable images ({total}) < required ({MIN_TOTAL_IMAGES})")

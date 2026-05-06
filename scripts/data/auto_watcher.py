@@ -78,7 +78,6 @@ def process_archive(
         logger.error("Auto-label failed: %s", exc)
         return
 
-
     # Log phân phối nhãn
     total = sum(v for k, v in stats.items() if k != "short_track_skipped")
     label_summary = "  ".join(
@@ -92,7 +91,9 @@ def process_archive(
             "UNCERTAIN",
         )
     )
-    logger.info("Labels: %s  |  skipped_short=%d", label_summary, stats["short_track_skipped"])
+    logger.info(
+        "Labels: %s  |  skipped_short=%d", label_summary, stats.get("short_track_skipped", 0)
+    )
 
     # Dọn dẹp extracted dir
     try:
