@@ -50,6 +50,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision.transforms.functional as TF
@@ -93,8 +94,9 @@ LABEL_MAP = {
 INTENT_NAMES = list(TRAINABLE_INTENT_NAMES)
 
 Sample = tuple[list[Path], int, float, float, str]
-KNOWN_NON_LABEL_DIRS = {"reports", "_extracted", "review_queue", ".git"}
+KNOWN_NON_LABEL_DIRS = {"reports", "_extracted", "_tracks", "review_queue", ".git"}
 METADATA_FILENAMES = ("metadata.jsonl", "imported_metadata.jsonl")
+SEQUENCE_MANIFEST = "sequence_manifest.jsonl"
 
 
 def _frame_id_from_name(path: Path) -> int:
@@ -117,6 +119,21 @@ def _resolve_crossing_dx(frames: list[dict], idx: int) -> float:
         prev_cx = float(frames[idx - 1]["cx"])
         return 0.8 if float(cx) > prev_cx else -0.8
     return 0.0
+
+
+def _fit_temporal_window(img_paths: list[Path], temporal_window: int) -> list[Path]:
+    """Map a whole-track K-frame sequence to the model input length T."""
+    if not img_paths:
+        return img_paths
+    target = max(1, int(temporal_window))
+    if len(img_paths) < target:
+        return [img_paths[0]] * (target - len(img_paths)) + img_paths
+    if len(img_paths) > target:
+        if target == 1:
+            return [img_paths[-1]]
+        indexes = np.linspace(0, len(img_paths) - 1, target)
+        return [img_paths[int(round(index))] for index in indexes]
+    return img_paths
 
 
 def _load_sample(
@@ -167,6 +184,15 @@ class ROIDataset(Dataset):
         self.transform = transform
         self.samples: list[Sample] = []
         self.temporal_window = max(1, int(temporal_window))
+
+        if self._load_sequence_manifest(root, max_samples, require_reviewed_erratic):
+            logger.info(
+                "ROIDataset loaded: %d manifest temporal samples from %s",
+                len(self.samples),
+                root,
+            )
+            self._log_class_distribution()
+            return
 
         # Load sidecar metadata once — keyed by resolved image path.
         # This is the primary source for track_uid, frame_id, and cx used to
@@ -316,6 +342,68 @@ class ROIDataset(Dataset):
                         img_path = (directory / file_value).resolve()
                         index[str(img_path)] = row
         return index
+
+    def _load_sequence_manifest(
+        self,
+        root: Path,
+        max_samples: int | None,
+        require_reviewed_erratic: bool,
+    ) -> bool:
+        manifest_path = root / SEQUENCE_MANIFEST
+        if not manifest_path.exists():
+            return False
+
+        skipped_review = 0
+        skipped_legacy = 0
+        with manifest_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                label = canonical_label(row.get("label"))
+                if not is_trainable_label(label):
+                    skipped_legacy += 1
+                    continue
+                review_status = str(row.get("review_status") or "")
+                if (
+                    require_reviewed_erratic
+                    and needs_human_review(label)
+                    and review_status not in REVIEW_ACCEPTED_STATUSES
+                ):
+                    skipped_review += 1
+                    continue
+
+                files = row.get("files") or []
+                if not isinstance(files, list) or not files:
+                    continue
+                img_paths = [(root / str(file_value)).resolve() for file_value in files]
+                if not all(path.exists() for path in img_paths):
+                    continue
+
+                img_paths = _fit_temporal_window(img_paths, self.temporal_window)
+
+                intent_cls = TRAINABLE_LABEL_TO_ID[label]
+                dx = float(row.get("dx", 0.0))
+                dy = float(row.get("dy", 0.0))
+                track_uid = str(row.get("track_uid") or row.get("sequence_id") or len(self.samples))
+                self.samples.append((img_paths, intent_cls, dx, dy, track_uid))
+
+        if max_samples and len(self.samples) > max_samples:
+            random.shuffle(self.samples)
+            self.samples = self.samples[:max_samples]
+        if skipped_review:
+            logger.warning(
+                "Skipped %d ERRATIC/UNCERTAIN manifest samples pending human review",
+                skipped_review,
+            )
+        if skipped_legacy:
+            logger.warning("Skipped %d non-trainable/legacy manifest samples", skipped_legacy)
+        return True
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -689,7 +777,9 @@ def fit_temperature(
     return float(temperature.detach().clamp(0.5, 10.0).item())
 
 
-def expected_calibration_error(logits: torch.Tensor, labels: torch.Tensor, temperature: float) -> float:
+def expected_calibration_error(
+    logits: torch.Tensor, labels: torch.Tensor, temperature: float
+) -> float:
     probs = torch.softmax(logits / max(temperature, 1e-6), dim=1)
     confs, preds = probs.max(dim=1)
     correct = preds.eq(labels)
@@ -746,7 +836,9 @@ def train(args: argparse.Namespace) -> None:
         logger.error("No images found in dataset. Check label folders: %s", list(LABEL_MAP))
         sys.exit(1)
     if len(index_ds) < 2:
-        logger.error("Need at least 2 trainable images for a train/val split; found %d", len(index_ds))
+        logger.error(
+            "Need at least 2 trainable images for a train/val split; found %d", len(index_ds)
+        )
         sys.exit(1)
 
     train_indices, val_indices = _split_by_track(index_ds.samples, args.val_split)
@@ -755,17 +847,23 @@ def train(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     train_ds = _SplitView(
-        index_ds.samples, train_indices,
-        transform=build_transforms(augment=True), hflip_p=0.5,
+        index_ds.samples,
+        train_indices,
+        transform=build_transforms(augment=True),
+        hflip_p=0.5,
     )
     val_ds = _SplitView(
-        index_ds.samples, val_indices,
-        transform=build_transforms(augment=False), hflip_p=0.0,
+        index_ds.samples,
+        val_indices,
+        transform=build_transforms(augment=False),
+        hflip_p=0.0,
     )
 
     logger.info(
         "Train: %d  Val: %d  (total: %d)",
-        len(train_ds), len(val_ds), len(index_ds),
+        len(train_ds),
+        len(val_ds),
+        len(index_ds),
     )
 
     train_loader = DataLoader(

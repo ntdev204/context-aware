@@ -123,7 +123,11 @@ class DatasetExplorer:
         """Run full exploration and return path to JSON report."""
         print(f"[*] Scanning {self.dataset_dir} ...")
         for img_path in self.dataset_dir.rglob("*.jpg"):
-            if "reports" in img_path.parts or "review_queue" in img_path.parts:
+            if (
+                "reports" in img_path.parts
+                or "review_queue" in img_path.parts
+                or "_tracks" in img_path.parts
+            ):
                 continue
             meta = self._read_image_meta(img_path)
             if meta:
@@ -186,19 +190,13 @@ class DatasetExplorer:
         tracks_sidecar: dict[str, list] = defaultdict(list)
         no_sidecar_count = 0
         for img in self.images:
-            has_sidecar = self._metadata_index.get(
-                str(Path(img["path"]).resolve())
-            ) is not None
+            has_sidecar = self._metadata_index.get(str(Path(img["path"]).resolve())) is not None
             if has_sidecar:
                 tracks_sidecar[img["track_id"]].append(img)
             else:
                 no_sidecar_count += 1
 
-        short_tracks = {
-            tid: len(imgs)
-            for tid, imgs in tracks_sidecar.items()
-            if len(imgs) < 5
-        }
+        short_tracks = {tid: len(imgs) for tid, imgs in tracks_sidecar.items() if len(imgs) < 5}
         tracks = tracks_sidecar  # keep for total_tracks report
 
         # 4. Generate Grids

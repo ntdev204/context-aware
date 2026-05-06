@@ -35,8 +35,6 @@ from ..perception.roi_extractor import PersonROI
 
 logger = logging.getLogger(__name__)
 
-MIN_SEQUENCE_FRAMES = 15
-MAX_SEQUENCE_FRAMES = 30
 MAX_TRACK_GAP_FRAMES = 45
 
 
@@ -85,7 +83,9 @@ class ROISaver:
         if self._running:
             return
         self._running = True
-        self._thread = threading.Thread(target=self._worker, daemon=True, name="track-sequence-saver")
+        self._thread = threading.Thread(
+            target=self._worker, daemon=True, name="track-sequence-saver"
+        )
         self._thread.start()
         logger.info("Track sequence saver started -> %s", self.save_dir)
 
@@ -100,7 +100,9 @@ class ROISaver:
         if self._thread:
             self._thread.join(timeout=2.0)
 
-    def start_collection(self, session_id: str | None = None, clear_existing: bool = True) -> dict[str, Any]:
+    def start_collection(
+        self, session_id: str | None = None, clear_existing: bool = True
+    ) -> dict[str, Any]:
         with self._state_lock:
             if self._collecting:
                 return self._status_locked()
@@ -250,15 +252,6 @@ class ROISaver:
 
         for track_id, records in sorted(tracks.items()):
             for segment in _split_track(records):
-                if len(segment) < MIN_SEQUENCE_FRAMES:
-                    rejected.append(
-                        {
-                            "track_id": track_id,
-                            "frame_count": len(segment),
-                            "reason": "too_short",
-                        }
-                    )
-                    continue
                 sequence_count += 1
                 track_name = f"track_{sequence_count:04d}"
                 track_dir = session_root / track_name
@@ -359,7 +352,7 @@ def _split_track(records: list[ROISaveRecord]) -> list[list[ROISaveRecord]]:
     current: list[ROISaveRecord] = [ordered[0]]
     for rec in ordered[1:]:
         prev = current[-1]
-        if rec.frame_id - prev.frame_id > MAX_TRACK_GAP_FRAMES or len(current) >= MAX_SEQUENCE_FRAMES:
+        if rec.frame_id - prev.frame_id > MAX_TRACK_GAP_FRAMES:
             chunks.append(current)
             current = [rec]
         else:
@@ -398,7 +391,6 @@ def _build_meta(
         "frame_w": records[0].frame_w if records else 0,
         "frame_h": records[0].frame_h if records else 0,
         "bbox_center_trajectory": [
-            {"cx": round(rec.cx, 1), "cy": round(rec.cy, 1)}
-            for rec in records
+            {"cx": round(rec.cx, 1), "cy": round(rec.cy, 1)} for rec in records
         ],
     }
