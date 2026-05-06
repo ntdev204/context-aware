@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import json
 import os
 import shutil
 import subprocess
@@ -17,7 +16,6 @@ from typing import Any, Literal
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-
 
 WORKSPACE = Path(os.getenv("CONTEXT_AWARE_WORKSPACE", "/workspace"))
 DEFAULT_DATASET = Path(os.getenv("DATASET_DIR", "/data/intent_dataset"))
@@ -305,7 +303,9 @@ def _read_best_checkpoint_metadata(output: Path) -> dict[str, Any] | None:
             "path": str(model_path),
             "epoch": checkpoint.get("epoch") if isinstance(checkpoint, dict) else None,
             "val_loss": checkpoint.get("val_loss") if isinstance(checkpoint, dict) else None,
-            "val_accuracy": checkpoint.get("val_accuracy") if isinstance(checkpoint, dict) else None,
+            "val_accuracy": checkpoint.get("val_accuracy")
+            if isinstance(checkpoint, dict)
+            else None,
             "temperature": checkpoint.get("temperature") if isinstance(checkpoint, dict) else None,
             "ece": metadata.get("ece") if isinstance(metadata, dict) else None,
         }

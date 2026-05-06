@@ -113,7 +113,9 @@ class DatasetManager:
             raise ValueError("Dataset session has no frames")
 
         root = self._session_root(status)
-        if status.get("dataset_mode") == DATASET_INTENT and hasattr(self.roi_saver, "_finalize_session"):
+        if status.get("dataset_mode") == DATASET_INTENT and hasattr(
+            self.roi_saver, "_finalize_session"
+        ):
             self.roi_saver._finalize_session()
             status = self.status()
         saved_status = dict(status)
@@ -223,7 +225,9 @@ class DatasetManager:
                     }
                 )
         else:
-            for original_index, frame in enumerate(sorted(root.glob("session_*/track_*/frames/*.jpg"))):
+            for original_index, frame in enumerate(
+                sorted(root.glob("session_*/track_*/frames/*.jpg"))
+            ):
                 meta = self._read_manifest(frame.parent.parent)
                 images.append(
                     {
@@ -394,7 +398,9 @@ class DatasetManager:
                     keys = sorted(handle.keys())
                     if index < offset + len(keys):
                         jpeg = bytes(handle[keys[index - offset]]["image_jpeg"][:])
-                        preview_path = self.exp_buffer.write_dir / f"preview_{session_id}_{index}.jpg"
+                        preview_path = (
+                            self.exp_buffer.write_dir / f"preview_{session_id}_{index}.jpg"
+                        )
                         preview_path.write_bytes(jpeg)
                         return preview_path
                     offset += len(keys)
