@@ -65,7 +65,7 @@ jetson-test:
 	$(JETSON_DEV) run --rm jetson-dev python -m pytest tests/ -v --tb=short
 
 jetson-download-models:
-	$(JETSON_DEV) run --rm jetson-dev python -c "from pathlib import Path; from ultralytics import YOLO; p = Path('models/yolo/yolo26s.pt'); p.parent.mkdir(parents=True, exist_ok=True); YOLO(str(p) if p.exists() else 'yolo26s.pt'); print(f'Model ready: {p}')"
+	$(JETSON_DEV) run --rm jetson-dev python -c "from pathlib import Path; import shutil; from ultralytics import YOLO; src = Path('/tmp/yolo26s.pt'); dst = Path('models/yolo/yolo26s.pt'); dst.parent.mkdir(parents=True, exist_ok=True); YOLO(str(src) if src.exists() else 'yolo26s.pt'); src = Path('yolo26s.pt') if Path('yolo26s.pt').exists() else src; shutil.copy2(src, dst); print(f'Model ready: {dst}')"
 
 jetson-export: jetson-download-models
 	$(JETSON_DEV) run --rm jetson-dev \
