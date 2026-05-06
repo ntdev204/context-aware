@@ -65,20 +65,12 @@ jetson-test:
 	$(JETSON_DEV) run --rm jetson-dev python -m pytest tests/ -v --tb=short
 
 jetson-download-models:
-	@mkdir -p models/yolo
-	@if [ ! -f models/yolo/yolo11n.pt ]; then \
-		echo "Downloading yolo11n.pt (18MB)..."; \
-		curl -L -o models/yolo/yolo11n.pt \
-			https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt; \
-		echo "Downloaded: models/yolo/yolo11n.pt"; \
-	else \
-		echo "models/yolo/yolo11n.pt already present."; \
-	fi
+	$(JETSON_DEV) run --rm jetson-dev python -c "from pathlib import Path; from ultralytics import YOLO; p = Path('models/yolo/yolo26s.pt'); p.parent.mkdir(parents=True, exist_ok=True); YOLO(str(p) if p.exists() else 'yolo26s.pt'); print(f'Model ready: {p}')"
 
 jetson-export: jetson-download-models
 	$(JETSON_DEV) run --rm jetson-dev \
-		python scripts/deploy/export_engine.py models/yolo/yolo11n.pt --fp16 --workspace 2 --imgsz 480 640
-	@echo "TensorRT engine ready: models/yolo/yolo11n.engine"
+		python scripts/deploy/export_engine.py models/yolo/yolo26s.pt --fp16 --workspace 2 --imgsz 480 640
+	@echo "TensorRT engine ready: models/yolo/yolo26s.engine"
 
 jetson-proto:
 	$(JETSON_DEV) run --rm jetson-dev python scripts/infra/generate_proto.py
