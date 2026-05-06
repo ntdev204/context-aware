@@ -25,7 +25,7 @@ camera:
 
 perception:
   yolo:
-    model_path: models/yolo/yolo26s.engine
+    model_path: models/yolo/yolo11n.engine
     use_tensorrt: true
     confidence_threshold: 0.5
     person_confidence_threshold: 0.5

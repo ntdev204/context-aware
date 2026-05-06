@@ -65,12 +65,12 @@ jetson-test:
 	$(JETSON_DEV) run --rm jetson-dev python -m pytest tests/ -v --tb=short
 
 jetson-download-models:
-	$(JETSON_DEV) run --rm jetson-dev python -c "from pathlib import Path; import shutil; from ultralytics import YOLO; src = Path('/tmp/yolo26s.pt'); dst = Path('models/yolo/yolo26s.pt'); dst.parent.mkdir(parents=True, exist_ok=True); YOLO(str(src) if src.exists() else 'yolo26s.pt'); src = Path('yolo26s.pt') if Path('yolo26s.pt').exists() else src; shutil.copy2(src, dst); print(f'Model ready: {dst}')"
+	$(JETSON_DEV) run --rm jetson-dev python -c "from pathlib import Path; import shutil; from ultralytics import YOLO; src = Path('/tmp/yolo11n.pt'); dst = Path('models/yolo/yolo11n.pt'); dst.parent.mkdir(parents=True, exist_ok=True); YOLO(str(src) if src.exists() else 'yolo11n.pt'); src = Path('yolo11n.pt') if Path('yolo11n.pt').exists() else src; shutil.copy2(src, dst); print(f'Model ready: {dst}')"
 
 jetson-export: jetson-download-models
 	$(JETSON_DEV) run --rm jetson-dev \
-		python scripts/deploy/export_engine.py models/yolo/yolo26s.pt --fp16 --workspace 2 --imgsz 480 640
-	@echo "TensorRT engine ready: models/yolo/yolo26s.engine"
+		python scripts/deploy/export_engine.py models/yolo/yolo11n.pt --fp16 --workspace 2 --imgsz 480 640
+	@echo "TensorRT engine ready: models/yolo/yolo11n.engine"
 
 jetson-proto:
 	$(JETSON_DEV) run --rm jetson-dev python scripts/infra/generate_proto.py
